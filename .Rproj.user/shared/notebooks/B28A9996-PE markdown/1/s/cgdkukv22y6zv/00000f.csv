@@ -1,4 +1,0 @@
-"0","paste(""average improvement by max deviation as a percent of the mean:"", abs(mean(SE_change[SE_change != 0], na.rm = TRUE)))
-"
-"1","[1] ""average improvement by max deviation as a percent of the mean: 70.32010467602""
-"
