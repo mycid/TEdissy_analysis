@@ -1,0 +1,50 @@
+"1","$result_df
+"
+"1","
+$merged_cells
+[1] 74
+
+$unmatched_cells
+[1] 21
+
+$unmatched_saved_to
+[1] ""unmatched_rows_pe_fluor2.csv""
+
+$assigned_to_global
+[1] TRUE
+
+"
+"0","joindf_by_id(PE3_calc, Fluor3_tidy, ""pe_fluor3.csv"", key_df1 = ""join_id"", key_df2 = ""Cell_ID"")"
+"1","
+Values needing repetition:
+E06 needs to be repeated
+E07 needs to be repeated
+E08 needs to be repeated
+E11 needs to be repeated
+F01 needs to be repeated
+F04 needs to be repeated
+F06 needs to be repeated
+F07 needs to be repeated
+F08 needs to be repeated
+F09 needs to be repeated
+F10 needs to be repeated
+F11 needs to be repeated
+F12 needs to be repeated
+G03 needs to be repeated
+G06 needs to be repeated
+G07 needs to be repeated
+G08 needs to be repeated
+G09 needs to be repeated
+G10 needs to be repeated
+G11 needs to be repeated
+H01 needs to be repeated
+H02 needs to be repeated
+H04 needs to be repeated
+H05 needs to be repeated
+H06 needs to be repeated
+H07 needs to be repeated
+H08 needs to be repeated
+H12 needs to be repeated
+"
+"2","G3;Join complete. Output saved to: pe_fluor3.csv
+g"

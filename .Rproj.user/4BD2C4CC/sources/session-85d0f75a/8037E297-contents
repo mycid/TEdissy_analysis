@@ -1,0 +1,139 @@
+---
+title: "PE diagnostics"
+author: "Trevor Eakes"
+date: "`r Sys.Date()`"
+output:
+  ioslides_presentation:
+    self_contained: false
+runtime: shiny
+params:
+  wd: "G:/My Drive/ACES/Dissy/analysis/PE"
+  input_file: "PE_2 13_5_25.xlsx"
+  output_file: "tidy_final_PE 2_13_5_25.csv"
+  blanks: ["A01", "A02", "A03"] # blanks for the input file
+---
+
+------------------------------------------------------------------------
+
+# Welcome to PE Diagnostics
+
+This analysis explores absorption and fluorescence data from *Chondracanthus chamissoi*, a red algae species native to Peru.
+
+Learn more about this fascinating organism [here](https://algaex.pe/en/raw-materials/alga-chondracanthus-chamissoi/).
+
+::: {style="text-align:center; margin:20px 0;"}
+<img src="https://algaex.pe/wp-content/uploads/2021/05/Chondracanthus-chamissoi.jpg" alt="Chondracanthus chamissoi" style="max-width:70%; border-radius:12px; box-shadow: 4px 4px 15px rgba(0,0,0,0.35);"/>
+
+<p style="font-style: italic; font-size: 0.9em; color: #555;">
+
+</p>
+:::
+
+------------------------------------------------------------------------
+
+# Script Setup and Data Sources
+
+This R Markdown uses functions from the `process_plate_run.R` script.\
+**Make sure this script and all relevant data files are stored in your working directory before proceeding.**
+
+```{r setup, include=FALSE}
+library(shiny)
+source("process_plate_run.R") # Load all custom functions
+```
+
+Loading Input Data Our study includes:
+
+3 Phycoerythrin data sheets
+
+3 Complementary fluorescence data sheets
+
+3 Sample weight spreadsheets
+
+1 Replicates datasheet
+
+We will load all Excel files from the specified input folder and convert them into data frames, keeping track of file names.
+
+```{r}
+load_excel_files("Input PE")
+
+```
+
+Tip: Check the console for confirmation that all files have loaded correctly.
+
+------------------------------------------------------------------------
+
+# 🧪 Step 1: Convert Raw Data to Usable Format
+
+We begin by processing raw absorbance and fluorescence data using a custom `tidy_all()` function.
+This function cleans and reshapes the data, performs blank correction, and filters poor-quality samples.
+
+### ✅ What happens in `tidy_all()`?
+
+-   **Data Import & Cleaning**: Loads spectral absorbance data, fills missing identifiers.
+-   **Reshaping**: Converts wide-format data into tidy, long-format structure.
+-   **Blank Correction**: Uses blanks (e.g., A01–A03) to remove background signal.
+-   **Filtering**: Excludes samples with negative absorbance at any wavelength.
+-   **Comparison**: Computes difference between X565 and X564 for quality control.
+
+------------------------------------------------------------------------
+
+# 🔄 Data Preparation & Tidy Processing
+
+```{r}
+# Define blanks for each experiment 
+blanks1 <- "A01" blanks2 <- c("A01", "A02", "A03") blanks3 <- c("H09", "H10", "H11")
+
+```
+
+# Create named lists of input data and blanks
+
+```{r}
+listPE <- list(PE1 = PE1, PE2 = PE2, PE3 = PE3) listFluor <- list(Fluor1 = Fluor1, Fluor2 = Fluor2, Fluor3 = Fluor3) listblank <- list(blanks1, blanks2, blanks3)
+
+```
+
+# Tidy and correct all absorbance and fluorescence datasets
+
+```{r}
+tidy_all(listPE, listblank) tidy_all(listFluor, listblank)
+
+```
+
+# 📊 Tidy Summary Statistics
+
+```{r}
+# Summarize cleaned fluorescence and PE absorbance
+summaries <- list(
+  Fluor1 = summary(Fluor1_tidy$Xred),
+  Fluor2 = summary(Fluor2_tidy$Xred),
+  Fluor3 = summary(Fluor3_tidy$Xred),
+  PE1    = summary(PE1_tidy$X565),
+  PE2    = summary(PE2_tidy$X565),
+  PE3    = summary(PE3_tidy$X565)
+)
+
+# Combine summaries into table
+all_stats <- unique(unlist(lapply(summaries, names)))
+summary_table <- data.frame(
+  Statistic = all_stats,
+  do.call(cbind, lapply(summaries, function(s) {
+    s_named <- as.list(s)
+    sapply(all_stats, function(k) s_named[[k]] %||% NA)
+  }))
+)
+colnames(summary_table)[-1] <- names(summaries)
+summary_table[,-1] <- round(summary_table[,-1], 2)
+print(summary_table)
+```
+
+➕ Absorbance Differences Between 565 and 564 nm
+
+```{r}
+# Add column for difference in absorbance (X565 - X564)
+PE_list <- list(PE1_tidy = PE1_tidy, PE2_tidy = PE2_tidy, PE3_tidy = PE3_tidy)
+PE_list <- lapply(PE_list, function(df) {
+  df %>% dplyr::mutate(diff_absorbance = X565 - X564)
+})
+list2env(PE_list, envir = .GlobalEnv)
+
+```

@@ -1,0 +1,26 @@
+"0","compare_groups(PErep_final, response_var = ""PE_mg_per_g_sample_mean"", group_var = ""variety"") #PE data by variety"
+"2","G3;Parametric test result (t-test):
+g"
+"1","
+	Welch Two Sample t-test
+
+data:  PE_mg_per_g_sample_mean by variety
+t = 2.2014, df = 37.922, p-value = 0.03386
+alternative hypothesis: true difference in means between group C.Cham and group F. Glom is not equal to 0
+95 percent confidence interval:
+ 0.002171698 0.051876971
+sample estimates:
+ mean in group C.Cham mean in group F. Glom 
+           0.05853709            0.03151275 
+
+"
+"2","G3;Non-parametric test result (Wilcoxon test):
+g"
+"1","
+	Wilcoxon rank sum exact test
+
+data:  PE_mg_per_g_sample_mean by variety
+W = 259, p-value = 0.0796
+alternative hypothesis: true location shift is not equal to 0
+
+"

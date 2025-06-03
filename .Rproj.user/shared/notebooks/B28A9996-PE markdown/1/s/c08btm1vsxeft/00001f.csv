@@ -1,0 +1,10 @@
+"0","graph_histograms_with_error(
+  data = combined_df,
+  variables = c(""PE_mg_per_g_sample"", ""Xred""),
+  id_col = ""ID""
+)
+"
+"2","[38;5;232mSaving 7 x 7 in image[39m
+"
+"1","$PE_mg_per_g_sample
+"

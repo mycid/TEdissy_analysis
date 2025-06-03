@@ -1,0 +1,28 @@
+---
+title: "Phycoerythrin (PE) Content Analysis"
+author: "Trevor Eakes"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+params:
+  wd: "G:/My Drive/ACES/Dissy/analysis/PE"
+  input_file: "PE_2 13_5_25.xlsx"
+  output_file: "tidy_final_PE 2_13_5_25.csv"
+  blanks: ["A01", "A02", "A03"] # blanks for input file
+---
+
+# Introduction
+
+This script analyzes absorption and fluorescence data collected from *Chondracanthus chamissoi* ([link](https://algaex.pe/en/raw-materials/alga-chondracanthus-chamissoi/)), a red alga species.
+
+![Chondracanthus chamissoi collected in Mendieta, Paracas Peru March 2025](https://algaex.pe/wp-content/uploads/2021/05/Chondracanthus-chamissoi.jpg)
+
+> **Note:** All functions used here are sourced from `process_plate_run.R`, which must be located in your working directory along with all input/output files.
+
+```{r setup, warning=FALSE, message=FALSE}
+source("process_plate_run.R")
+
+

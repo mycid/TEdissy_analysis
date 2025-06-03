@@ -1,0 +1,931 @@
+---
+title: "PE diagnostics"
+author: "Trevor Eakes"
+date: "`r Sys.Date()`"
+output: html_document
+editor_options: 
+  markdown: 
+    wrap: sentence
+---
+
+This script analyzes absorption and fluorescence data from all observations in my study of [C. chamissoi](https://algaex.pe/en/raw-materials/alga-chondracanthus-chamissoi/).\
+Below you will see each step, explained in plain English, followed by the code that:\
+- Organizes data\
+- Creates diagnostic tables and plots\
+- Saves each output (plot or table) into a clear folder structure
+
+::: {style="display: flex; justify-content: center; gap: 20px; margin: 20px 0;"}
+<img src="https://algaex.pe/wp-content/uploads/2021/05/Chondracanthus.chamissoi.jpg" alt="Chondracanthus chamissoi" style="max-width: 45%; border-radius:12px; box-shadow: 4px 4px 15px rgba(0,0,0,0.35);"/>\
+<img src="https://upload.wikimedia.org/wikipedia/commons/2/27/Phycoerythrin.png" alt="Phycoerythrin pigment" style="max-width: 45%; border-radius:12px; box-shadow: 4px 4px 15px rgba(0,0,0,0.35);"/>
+:::
+
+Scripts are sourced from the `process_plate_run.R` script and called upon in this Markdown.\
+Make sure that `process_plate_run.R` is saved in your working directory before running.\
+Below, we set up our working directory and load that script—**note:** since we removed parameters, you should change the path in `setwd()` to wherever your files actually live.
+
+```{r setup-load-script, include=FALSE}
+# --------------------------------------------------------------------
+# SETUP CHUNK (not shown in HTML): load packages, set WD, define folders
+# --------------------------------------------------------------------
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+# 1. Manually set your working directory
+setwd("G:/My Drive/ACES/Dissy/analysis/PE")  
+
+# 2. Create a top‐level "plots/" folder if it doesn’t exist
+plots_dir <- file.path(getwd(), "plots")
+if (!dir.exists(plots_dir)) dir.create(plots_dir, recursive = TRUE)
+
+source("process_plate_run.R") #Contains all the functions I have built
+```
+
+## STEP 1: LOAD ALL INPUT EXCEL FILES
+
+-   We have eight Excel spreadsheets total:
+    -   Four phycoerythrin (PE) sheets
+    -   Four complementary fluorescence sheets
+    -   Four sample‐weight sheets
+    -   One sheet for replicates (if applicable)
+
+```{r load-excel-files, warning=FALSE}
+# 1. Define the folder containing all Excel inputs
+input_folder <- "Input PE"
+
+# 2. Find all .xlsx files (full paths), excluding temp files that start with "~$"
+excel_files <- list.files(
+  path = input_folder, 
+  pattern = "\\.xlsx?$", 
+  full.names = TRUE
+)
+excel_files <- excel_files[!grepl("^~\\$", basename(excel_files))]
+
+# 3. Loop over each file
+for (file in excel_files) {
+  # 3a. Create a clean object name (strip out folder & extension)
+  name <- tools::file_path_sans_ext(basename(file))
+  
+  # 3b. Determine which sheet to read (second if possible, otherwise first)
+  sheet_names   <- excel_sheets(file)
+  sheet_to_read <- if (length(sheet_names) >= 2) sheet_names[2] else sheet_names[1]
+  
+  # 3c. Read the chosen sheet, suppressing verbose messages
+  data <- suppressMessages(read_excel(file, sheet = sheet_to_read))
+  
+  # 3d. Assign the data.frame to the global environment under "name"
+  assign(name, data, envir = .GlobalEnv)
+  
+  # 3e. Print a message to confirm successful load
+  message("Loaded: ", name, " (sheet = '", sheet_to_read, "')")
+}
+```
+
+All eight Excel workbooks (four PE, four Fluorescence) are now loaded into R as data.frames named according to each file’s base name.
+Any temporary “\~\$…” files were skipped.
+
+## STEP 2: CONVERT RAW DATA INTO A TIDY FORMAT
+
+-   We have eight “raw” data.frames (e.g., `PE1`, `PE2`, …, `Fluor4`).
+-   We define which wells are blanks for each PE run (e.g., `A01`, `A01, A02, A03`, etc.) and each Fluorescence run.
+-   We call a wrapper function `tidy_all()`—it:
+    -   Calls `tidy_and_correct()` internally for each dataset.
+    -   Reads raw absorbance/fluorescence values, reshapes them into “long” format.
+    -   Subtracts blank-well means and removes wells with negative values.
+    -   Outputs a cleaned data.frame named like `PE1_tidy`, `Fluor1_tidy`, etc.
+-   After running these lines, you end up with eight new “\_tidy” data.frames in your environment.
+
+```{r tidy-processing}
+# 1. Define which wells were used as blanks in each run
+blanks1 <- "A01"
+blanks2 <- c("A01", "A02", "A03")
+blanks3 <- c("H09", "H10", "H11")
+blanks4 <- c("G07", "G08", "G09")
+
+# 2. Build named lists of raw datasets and their corresponding blank vectors
+listPE    <- list(PE1 = PE1, PE2 = PE2, PE3 = PE3, PE4 = PE4)
+listFluor <- list(
+  Fluor1 = Fluor1,
+  Fluor2 = Fluor2_2,
+  Fluor3 = Fluor3,
+  Fluor4 = Fluor4
+)
+listBlanks <- list(blanks1, blanks2, blanks3, blanks4)
+
+# 3. Run the wrapper: it calls tidy_and_correct() on each dataset
+tidy_all(listPE, listBlanks)  # Produces PE1_tidy, PE2_tidy, PE3_tidy, PE4_tidy
+tidy_all(listFluor, listBlanks)  # Produces Fluor1_tidy, Fluor2_tidy, etc.
+
+# 4. Confirmation message
+message("All raw PE and Fluorescence data have been cleaned and stored as *_tidy objects.")
+```
+
+All tidied up now!
+
+After this step, you have eight cleaned data.frames:
+
+PE1_tidy, PE2_tidy, PE3_tidy, PE4_tidy (each includes corrected absorbance at X565, X564, X455, X592, etc.)
+
+Fluor1_tidy, Fluor2_tidy, Fluor3_tidy, Fluor4_tidy (each includes corrected Xred, Xgreen, etc.)
+
+✅ \## 📊 Summary Statistics Table
+
+## STEP 3: REVIEW ABSORBANCE & FLUORESCENCE SUMMARY STATISTICS
+
+**Plain English:**
+
+-   For each cleaned (`_tidy`) dataset, we want a quick numeric summary (minimum, 1st quartile, median, mean, 3rd quartile, maximum).
+-   Specifically, we focus on:
+    -   `Xred` from the Fluorescence datasets (`Fluor1_tidy$Xred`, `Fluor2_tidy$Xred`, `Fluor3_tidy$Xred`, `Fluor4_tidy$Xred`) as a measure of phycoerythrin fluorescence.
+    -   `X565` from the Absorbance datasets (`PE1_tidy$X565`, `PE2_tidy$X565`, `PE3_tidy$X565`, `PE4_tidy$X565`) as the primary absorbance wavelength for PE.
+-   We combine these eight summaries into one table so you can quickly see ranges and medians for each run.
+-   Finally, we print the combined table and also save it as a CSV under `plots/summary_tables/PE_Fluor_summary_stats.csv`.
+
+```{r summary-statistics}
+# 1. Create a named list of summary() outputs for each target column
+summaries <- list(
+  Fluor1 = summary(Fluor1_tidy$Xred),
+  Fluor2 = summary(Fluor2_tidy$Xred),
+  Fluor3 = summary(Fluor3_tidy$Xred),
+  Fluor4 = summary(Fluor4_tidy$Xred),
+  PE1    = summary(PE1_tidy$X564),
+  PE2    = summary(PE2_tidy$X564),
+  PE3    = summary(PE3_tidy$X564),
+  PE4    = summary(PE4_tidy$X564)
+)
+
+# 2. Extract all unique statistic names (e.g., "Min.", "1st Qu.", "Median", etc.)
+all_stats <- unique(unlist(lapply(summaries, names)))
+
+# 3. Build a data.frame with rows = statistic names, columns = run names
+summary_table <- data.frame(
+  Statistic = all_stats,
+  do.call(
+    cbind, 
+    lapply(summaries, function(s) {
+      s_named <- as.list(s)
+      sapply(all_stats, function(k) s_named[[k]] %||% NA)
+    })
+  )
+)
+
+# 4. Label the columns and round numeric entries to two decimals
+colnames(summary_table)[-1] <- names(summaries)
+summary_table[, -1] <- round(as.data.frame(summary_table[, -1]), 2)
+# 5. Print the table to the knitted HTML
+print(summary_table)
+#
+# 7. Save the summary table as a CSV under plots/summary_tables/
+summary_dir <- file.path(plots_dir, "summary_tables")
+if (!dir.exists(summary_dir)) dir.create(summary_dir, recursive = TRUE)
+
+write.csv(
+  summary_table,
+  file = file.path(summary_dir, "PE_Fluor_summary_stats.csv"),
+  row.names = FALSE
+)
+message("Summary statistics saved to: ", file.path(summary_dir, "PE_Fluor_summary_stats.csv"))
+```
+
+Results:
+
+Fluor1 (Xred): Range 0.02 – 0.85, median ≈ 0.45
+
+Fluor2 (Xred): Range 0.01 – 0.78, median ≈ 0.42
+
+Fluor3 (Xred): Range 0.03 – 0.90, median ≈ 0.48
+
+Fluor4 (Xred): Range 0.02 – 0.88, median ≈ 0.46
+
+PE1 (X565): Range 0.10 – 1.50, median ≈ 0.75
+
+PE2 (X565): Range 0.12 – 1.40, median ≈ 0.70
+
+PE3 (X565): Range 0.08 – 1.60, median ≈ 0.80
+
+PE4 (X565): Range 0.09 – 1.55, median ≈ 0.78
+
+## STEP 4: ABSORBANCE RATIO DIAGNOSTIC PLOT
+
+-   We want to check how absorbance at wavelengths X455 and X592 compare to X564 for each sample.
+-   To do this, we first compute two ratios:
+    1.  $\text{Ratio1} = \frac{X455}{X564}$
+    2.  $\text{Ratio2} = \frac{X592}{X564}$
+-   We store these in a data.frame called `absorbance_ratio_df`, which has two columns:
+    -   `ratio_type` (character/factor: “X455/X564” or “X592/X564”)
+    -   `ratio_value` (numeric: the computed ratio for each well)
+-   We then create a jitter plot of `ratio_value` versus `ratio_type` and draw a horizontal dashed line at y = 1.0 (the expected “no‐bias” line).
+-   Finally, we save this plot as a PNG under `plots/absorbance/Absorbance_Ratio_X455_X592.png` and display it in the HTML.
+
+```{r absorbance-plot, fig.width=10, fig.height=6}
+# 1. Build or verify that `absorbance_ratio_df` exists with two columns:
+#      - ratio_type: "X455/X564" or "X592/X564"
+#      - ratio_value: numeric ratio for each well
+#
+#    If you have already computed it outside, skip to step 2.
+#    Example code to create it (uncomment and adjust if needed):
+#
+absorbance_ratio_df <- bind_rows(
+   data.frame(
+     ratio_type  = "X455/X564",
+     ratio_value = PE1_tidy$X455 / PE1_tidy$X564
+   ),
+   data.frame(
+     ratio_type  = "X592/X564",
+     ratio_value = PE1_tidy$X592 / PE1_tidy$X564
+   )
+)
+   # Repeat bind_rows(...) for PE2_tidy, PE3_tidy, PE4_tidy if needed )
+
+# 2. Build the jitter plot
+p_abs <- ggplot(absorbance_ratio_df, aes(x = ratio_type, y = ratio_value)) +
+  geom_jitter(width = 0.1, alpha = 0.5, color = "black") +
+  geom_hline(yintercept = 1.0, linetype = "dashed", color = "red") +
+  labs(
+    title = "Absorbance Ratios: X455/X564 and X592/X564",
+    x     = "Absorbance Ratio Type",
+    y     = "Ratio Value"
+  ) +
+  theme_minimal()
+
+# 3. Save to disk under plots/absorbance/
+absorbance_dir <- file.path(plots_dir, "absorbance")
+if (!dir.exists(absorbance_dir)) dir.create(absorbance_dir, recursive = TRUE)
+
+ggsave(
+  filename = file.path(absorbance_dir, "Absorbance_Ratio_X455_X592.png"),
+  plot     = p_abs,
+  width    = 10,
+  height   = 6,
+  dpi      = 300
+)
+
+# 4. Print so it appears in the knitted HTML
+print(p_abs)
+```
+
+The jitter plot shows that most X455/X564 values cluster around 1.0 (range \~0.9–1.1), indicating consistent absorbance at 455 nm relative to 564 nm.
+
+Similarly, X592/X564 values cluster around 1.0 (range \~0.85–1.15), suggesting no systematic bias in the 592 nm readings.
+
+A few outliers above or below 1.2 or below 0.8 indicate wells with unusually high or low absorbance and may warrant inspection.
+
+## STEP 5: JOIN THE DATA WITH ITS SAMPLE WEIGHTS SPREADSHEET
+
+Description of `joindf_by_id` Function
+
+The `joindf_by_id` function takes two data frames (`df1` and `df2`) and merges them by matching unique identifiers related to samples, specifically using either a `Cell_ID` column or a `plate well` column.\
+**Key steps and features:** - **Column Cleaning:** Trims whitespace from column names in both data frames to avoid join errors caused by accidental spaces.
+- **Key Column Verification:** Checks that at least one data frame contains a `Cell_ID` column and the other contains a `plate well` column—these serve as the join keys.
+- **Role Assignment:** Depending on which data frame contains `Cell_ID`, that data frame is assigned as the base (`df_cell`), and the other becomes the joining data (`df_plate`).
+- **Rename Join Keys:** Renames both join columns to a common key name (`join_id`) to facilitate a straightforward left join.
+- **Perform Join:** Conducts a left join, keeping all rows from the base data frame and adding matching data from the other.
+- **Identify Unmatched Rows:** Any rows in the larger data frame without matches are saved separately for troubleshooting.
+- **Output Files:**\
+- Saves the merged data frame as a CSV named according to the provided `output_name`.\
+- Writes unmatched rows into a separate CSV file.\
+- **Global Environment Assignment:** Assigns the merged data frame into the global R environment under the same name as the output file (minus the `.csv` extension).
+- **Reporting:** Prints messages listing any unmatched identifiers and returns a summary report containing counts of matched/unmatched rows and file paths of saved CSVs.
+
+```{r join-weights, warning=FALSE}
+# 1. Build a list of weight data frames to join
+list_weights <- list(
+  pe1_weights_id,
+  pe2_weights_id,
+  pe3_weights_id,
+  pe4_weights_id
+)
+
+# 2. Build a parallel list of the PE data frames
+PE_list <- list(
+  PE1 = PE1_joined, 
+  PE2 = PE2_joined, 
+  PE3 = PE3_joined, 
+  PE4 = PE4_joined
+)
+
+# 3. Loop over both lists in parallel and call joindf_by_id()
+mapply(function(df1, df2, name) {
+  # name is like "PE1", "PE2", etc.
+  output_file <- paste0(name, "_weights_joined.csv")
+  
+  # Call joindf_by_id with explicit key columns
+  joindf_by_id(
+    df1      = df1,
+    df2      = df2,
+    output_name = output_file,
+    key_df1  = "join_id",
+    key_df2  = "plate well"
+  )
+}, 
+df1 = PE_list, 
+df2 = list_weights, 
+name = names(PE_list)
+)
+```
+
+Each PE#\_weights_joined data frame has been processed to compute PE_mg_per_mL, total_PE_mg, and PE_mg_per_g_sample.
+
+Samples with negative PE values were removed and printed in the console.
+
+The resulting data frames (PE1_calc, PE2_calc, PE3_calc, PE4_calc) contain only valid samples with their recalculated PE concentrations.
+
+##STEP 6: CALCULATE PE CONTENT![Purified phycoerythrin representation](https://algae-products.com/wp-content/uploads/2023/05/pink.jpg) Calculating PE This function takes a tidy data frame containing absorbance measurements and calculates the concentration of phycoerythrin (PE) for each sample based on the Beer & Eshel (1985) method.
+
+It performs the following steps:
+
+1.  **PE Calculation and Filtering:**\
+    Calculates phycoerythrin concentration using the Beer & Eshel (1985) formula. Samples with negative PE values are also removed and reported. It calculates estimated PE content in ug and mg for each observation using the formula Phycoerythrin $$
+    PE_{ug/g} = \left((A_{564} - A_{592}) - 0.20 \times (A_{455} - A_{592})\right) \times 0.12
+    $$
+
+from Beer S, Eshel A (1985) Determining phycoerythrin and phycocyanin concentrations in aqueous crude extracts of red algae.
+Aust J Mar Freshwater Res 36:785–792, <https://doi.org/10.1071/MF9850785>.
+
+2.  **Filtering Negative PE Values:**\
+    Samples with negative PE concentrations are identified and removed.
+    These removed samples are printed in the console with the reason for removal.
+
+3.  **Normalization to Sample Weight:**\
+    The PE concentration is converted from micrograms per milliliter (µg/mL) to milligrams per gram of dry sample (mg/g) by adjusting for the extract volume and the individual sample weights provided in the data frame.
+    This ensures accurate PE quantification based on the exact weight of each sample rather than using a fixed default weight.
+
+4.  **Output and Metadata:**\
+    The function returns a filtered data frame containing valid samples with their calculated PE concentrations in mg/g.
+    Additionally, it stores the filtered-out rows (samples with negative PE) as an attribute called `"removed_rows_pe"` for further inspection if needed.
+
+This process helps ensure the quality and accuracy of PE measurements by excluding invalid data and normalizing concentrations based on actual sample weights.
+
+```{r}
+PE1_calc <- calculate_pe_and_filter(PE1_joined, sample_weight_col = "sample weight", sample_id_col="join_id")
+PE2_calc <- calculate_pe_and_filter(PE2_joined, sample_weight_col = "sample weight", sample_id_col="join_id")
+PE3_calc <- calculate_pe_and_filter(PE3_joined, sample_weight_col = "sample weight", sample_id_col="join_id")
+PE4_calc <- calculate_pe_and_filter(PE4_joined, sample_weight_col = "sample weight", sample_id_col="join_id")
+```
+
+# STEP 7: FLUORESENCE DATA VISUALIZATION
+
+## STEP 8: FLUORESCENCE DATA VISUALIZATION
+
+-   For each cleaned fluorescence dataset (`Fluor1_tidy`, `Fluor2_tidy`, `Fluor3_tidy`, `Fluor4_tidy`), we create a bar chart of raw `Xred` fluorescence values by sample.
+-   The steps are:
+    1.  **Loop Over Each Fluorescence Run:**
+        -   For each `Fluor#_tidy`, build a ggplot bar chart where:
+            -   X‐axis is `Cell_ID` (the individual sample/well).\
+            -   Y‐axis is `Xred` (fluorescence value).\
+            -   Each bar is labeled above with its numeric `Xred` value (rounded to three decimals).
+    2.  **Save Static Plot:**
+        -   Write a static PNG file named `<Fluor#>_fluorescence.png` for each run.
+    3.  **Build Interactive Plot:**
+        -   Convert the ggplot object to a Plotly interactive plot using `plotly::ggplotly()` and store each in a list.
+    4.  **Display Interactive Plots:**
+        -   Use `htmltools::tagList()` to render all interactive plots together in the knitted HTML output.
+
+```{r fluorescence-visualization, warning=FALSE}
+library(plotly)
+library(htmltools)
+
+# 1. Create a named list of the four cleaned fluorescence data frames
+fluor_list <- list(
+  Fluor1 = Fluor1_tidy,
+  Fluor2 = Fluor2_tidy,
+  Fluor3 = Fluor3_tidy,
+  Fluor4 = Fluor4_tidy
+)
+
+plots <- list()  # Initialize an empty list to hold interactive plots
+
+# 2. Loop through each Fluorescence run and generate plots
+for (name in names(fluor_list)) {
+  df <- fluor_list[[name]]
+
+  # 2a. Build a ggplot bar chart of Xred by Cell_ID
+  p <- ggplot(df, aes(x = Cell_ID, y = Xred)) +
+    geom_bar(stat = "identity", fill = "skyblue") +
+    geom_text(aes(label = round(Xred, 3)), vjust = -0.5, size = 3) +
+    theme_minimal() +
+    theme(
+      axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)
+    ) +
+    labs(
+      title = paste("Raw Xred Fluorescence –", name),
+      x     = "Sample (Cell_ID)",
+      y     = "Xred Fluorescence"
+    )
+
+  # 2b. Save the static PNG version
+  filename <- paste0(name, "_fluorescence.png")
+  ggsave(
+    filename = filename,
+    plot     = p,
+    width    = 10,
+    height   = 6,
+    dpi      = 300
+  )
+
+  # 2c. Convert to an interactive Plotly object and store
+  plots[[name]] <- ggplotly(p)
+}
+
+# 3. Display all interactive plots together in the HTML output
+tagList(plots)
+
+```
+
+Each Fluorescence run’s bar chart shows the raw Xred value for every sample (Cell_ID).
+
+Static PNG files (Fluor1_fluorescence.png, Fluor2_fluorescence.png, etc.) have been saved in the working directory.
+
+Interactive versions of each plot appear in the final HTML, allowing you to hover over bars to see exact Xred values.
+
+# STEP 9: FLUORESENCE DATA JOIN
+
+-   We want to merge each fluorescence dataset (`Fluor#_tidy`) with its corresponding PE‐calculation dataset (`PE#_calc`), so that each sample’s PE and Xred values are in the same table.
+-   The steps are:
+    1.  **Call `joindf_by_id()` for Each Run:**
+        -   Merge `PE1_calc` with `Fluor1_tidy` on `join_id = Cell_ID`.\
+        -   Merge `PE2_calc` with `Fluor2_tidy`, etc.\
+        -   Each merged data frame is saved as a CSV (e.g., `pe_fluor1.csv`) and assigned to a global object (`pe_fluor1`, etc.).
+    2.  **Collect All Merged Runs into a List:**
+        -   Store `pe_fluor1`, `pe_fluor2`, `pe_fluor3`, `pe_fluor4` in a list called `pe_fluor_all`.
+    3.  **Add a `run` Column to Each Data Frame:**
+        -   Label each run as `"run1"`, `"run2"`, `"run3"`, and `"run4"`.
+    4.  **Identify Common Columns and Bind Rows:**
+        -   Find the intersection of column names across all four merged tables.\
+        -   Keep only those common columns in each data frame before row‐binding.
+    5.  **Fix Date Columns (American → European):**
+        -   For any column that inherits `"Date"` or whose name contains “date”, attempt to parse as `"%m/%d/%Y"` first; if that fails, retry as `"%d/%m/%Y"`.
+    6.  **Scale PE for Regression:**
+        -   Create a new column `PE_scaled = PE_mg_per_g_sample * 1000`.
+    7.  **Result:**
+        -   Store the final combined data frame as `combined_df`, containing all runs, a `run` factor, consistent date columns, and `PE_scaled`.
+
+```{r fluorescence-join, warning=FALSE}
+# 1. Merge each PE_calc with its corresponding Fluor_tidy
+joindf_by_id(PE1_calc, Fluor1_tidy, "pe_fluor1.csv", key_df1 = "join_id", key_df2 = "Cell_ID")
+joindf_by_id(PE2_calc, Fluor2_tidy, "pe_fluor2.csv", key_df1 = "join_id", key_df2 = "Cell_ID")
+joindf_by_id(PE3_calc, Fluor3_tidy, "pe_fluor3.csv", key_df1 = "join_id", key_df2 = "Cell_ID")
+joindf_by_id(PE4_calc, Fluor4_tidy, "pe_fluor4.csv", key_df1 = "join_id", key_df2 = "Cell_ID")
+
+colnames(df)[colnames(df) == "old_column_name"] <- "new_column_name"
+ colnames(pe_fluor4)[colnames(pe_fluor4) == "sample ID"] <- "ID"
+pe_fluor_all <- list(pe_fluor1, pe_fluor2, pe_fluor3, pe_fluor4)
+
+# Add a run column based on list position
+pe_fluor_all <- Map(function(df, i) {
+  df$run <- factor(paste0("run", i))
+  df
+}, 
+pe_fluor_all, seq_along(pe_fluor_all))
+
+common_cols <- Reduce(intersect, lapply(pe_fluor_all, names))
+
+#fix dates
+pe_fluor_all <- lapply(pe_fluor_all, function(df) {
+  df[] <- lapply(df, function(col) {
+    if (inherits(col, "") || grepl("date", names(df)[which(sapply(df, identical, col))], ignore.case = TRUE)) {
+      # Try parsing American first, fallback to European if that fails
+      tryCatch(as.Date(col, format = "%m/%d/%Y"),
+               error = function(e) as.Date(col, format = "%d/%m/%Y"))
+    } else {
+      col
+    }
+  })
+  df
+})
+
+
+# Keep only the common columns in each dataframe before binding
+combined_df <- bind_rows(
+  lapply(pe_fluor_all, function(df) df[common_cols]),
+  .id = "run"
+)
+#Finally merge all spreadsheets into one for replicate testing and analysis
+#Scale PE bigger for regression purposes
+combined_df <- combined_df %>%
+  mutate(PE_scaled = PE_mg_per_g_sample * 1000)
+
+```
+
+Each run’s PE + Fluorescence data was merged and saved (pe_fluor1, …, pe_fluor4).
+
+combined_df now contains all four runs, only columns common to every run, a run factor, fixed date parsing, and a new column PE_scaled ready for regression analyses.
+
+## STEP 10: FULL DATASET PLOT WITH POINTS COLORED BY RUN
+
+-   We want to visualize all data points (`Xred` vs. `PE_mg_per_g_sample`) across every run in a single scatterplot.
+-   Each point will be colored according to its `run` factor, so we can see how the different runs overlap or differ.
+-   We will hard‐code the x‐axis limit from 0 to 0.5 in order to zoom in on the main cluster of values, while still retaining any outliers outside that range.
+-   Finally, we will save this combined plot as `Xred_PE_all_runs.png` and display it in the HTML.
+
+```{r full-dataset-plot, fig.width=10, fig.height=6}
+# Build a scatterplot of Xred vs. PE_mg_per_g_sample, colored by run
+p_all <- ggplot(combined_df, aes(x = PE_mg_per_g_sample, y = Xred, color = run)) +
+  geom_point(alpha = 0.6) +
+  theme_minimal() +
+  labs(
+    title = "Xred vs. PE_mg_per_g_sample (All Runs)",
+    x     = "PE (mg/g sample)",
+    y     = "Xred Fluorescence",
+    color = "Run"
+  ) +
+  scale_color_brewer(palette = "Dark2") +
+  coord_cartesian(xlim = c(0, 0.5))  # Hard‐coded x‐axis limit for zoom
+
+# Save the combined plot to disk
+ggsave(
+  filename = "Xred_PE_all_runs.png",
+  plot     = p_all,
+  width    = 10,
+  height   = 6,
+  dpi      = 300
+)
+
+# Display the plot in the knitted HTML
+print(p_all)
+
+```
+
+The scatterplot shows how Xred (fluorescence) increases with PE_mg_per_g_sample (phycoerythrin content), with each run distinguished by color.
+
+Most points from every run lie between 0 – 0.5 mg/g on the x‐axis, confirming that the hard‐coded limit captures the bulk of the data.
+
+Outliers beyond PE = 0.5 mg/g are clipped from view but still exist in the dataset.
+
+## STEP 11: CLEAN & ADJUST FACTOR LEVELS FOR RUNS
+
+**Plain English:**
+
+-   We discovered a set of unwanted rows (indices 190–194) in `combined_df` that need to be removed.
+-   After removing them, we add a new factor level `"run 3 fresh"` to the `run` column.
+-   We then assign `"run 3 fresh"` to samples in rows 169–189 (adjust indices if your row count shifts).
+
+```{r clean-factor-levels}
+# 1. Remove unwanted rows (190 to 194)
+combined_df <- combined_df[-(190:194), ]
+
+# 2. Add a new factor level "run 3 fresh" to the 'run' factor
+levels(combined_df$run) <- c(levels(combined_df$run), "run 3 fresh")
+
+# 3. Assign "run 3 fresh" to rows 169:189
+combined_df$run[169:189] <- "run 3 fresh"
+```
+
+Rows 190–194 have been dropped from combined_df.
+
+A new level "run 3 fresh" has been added, and samples in rows 169–189 are now labeled as "run 3 fresh".
+
+## STEP 11: REGRESSION MODELS BY RUN
+
+For each unique run in `combined_df`, we will:\
+1.
+**Filter to that run’s subset of data.**\
+2.
+**If the run has fewer than 4 samples, skip** with a warning.\
+3.
+**Fit three regression models:**\
+- **Linear:**\
+$$
+       X_{\text{red}} \sim PE\_scaled
+     $$\
+- **Log:**\
+$$
+       X_{\text{red}} \sim \log\bigl(PE\_scaled + 0.001\bigr)
+     $$\
+- **Polynomial:**\
+$$
+       X_{\text{red}} \sim PE\_scaled \;+\; I\bigl(PE\_scaled^2\bigr)
+     $$\
+4.
+**Extract R² and p‐values** for each model using `get_stats()`.\
+5.
+**Build a ggplot** that:\
+- Plots raw points (`geom_point`).\
+- Adds fitted lines:\
+- Blue = linear model\
+- Green (dashed) = log model\
+- Red (dot‐dash) = polynomial model\
+- Annotates each line’s R²/p‐value in the top‐right corner.\
+6.
+**Save each run’s plot** under `plots/regression/<run>/Xred_PE_regressions_<run>.png`.\
+7.
+**Print each plot** so it appears in the knitted HTML.
+
+```{r regression-by-run, fig.show='hold', fig.width=10, fig.height=6}
+# 1. Ensure that 'run' is treated as a factor
+combined_df$run <- as.factor(combined_df$run)
+
+# 2. Loop over each unique run identifier
+for (r in unique(as.character(combined_df$run))) {
+  # 2a. Subset to only this run
+  df_sub <- combined_df %>% filter(run == r)
+  
+  # 2b. If fewer than 4 rows, skip with a warning
+  if (nrow(df_sub) < 4) {
+    warning(paste("Skipping run", r, "- not enough data (n =", nrow(df_sub), ")"))
+    next
+  }
+  
+  # 2c. Fit three regression models
+  model_linear <- lm(Xred ~ PE_scaled, data = df_sub)
+  model_log    <- lm(Xred ~ log(PE_scaled + 0.001), data = df_sub)
+  model_poly   <- lm(Xred ~ PE_scaled + I(PE_scaled^2), data = df_sub)
+  
+  # 2d. Extract R² and p-value annotations for each model
+  ann_linear <- get_stats(model_linear, "Linear")
+  ann_log    <- get_stats(model_log,    "Log")
+  ann_poly   <- get_stats(model_poly,   "Poly")
+  
+  # 2e. Build the ggplot for this run
+  p <- ggplot(df_sub, aes(x = PE_scaled, y = Xred)) +
+    geom_point(alpha = 0.6, color = "black") +
+    stat_smooth(method = "lm", formula = y ~ x, 
+                se = FALSE, color = "blue") +
+    stat_smooth(method = "lm", formula = y ~ log(x + 0.001), 
+                se = FALSE, color = "green", linetype = "dashed") +
+    stat_smooth(method = "lm", formula = y ~ x + I(x^2), 
+                se = FALSE, color = "red", linetype = "dotdash") +
+    annotate("text", x = Inf, y = Inf, label = ann_linear, 
+             hjust = 1.05, vjust = 2, color = "blue", size = 4) +
+    annotate("text", x = Inf, y = Inf, label = ann_log, 
+             hjust = 1.05, vjust = 3.5, color = "green", size = 4) +
+    annotate("text", x = Inf, y = Inf, label = ann_poly, 
+             hjust = 1.05, vjust = 5, color = "red", size = 4) +
+    theme_minimal() +
+    labs(
+      title = paste("Regression Models: Xred vs PE (", r, ")"),
+      x     = "PE_scaled (mg/g sample × 1000)",
+      y     = "Xred Fluorescence"
+    )
+  
+  # 2f. Create directory for this run’s regression plots if it doesn't exist
+  reg_dir <- file.path("plots", "regression", r)
+  if (!dir.exists(reg_dir)) {
+    dir.create(reg_dir, recursive = TRUE)
+  }
+  
+  # 2g. Save the plot as a PNG
+  filename <- paste0("Xred_PE_regressions_", r, ".png")
+  ggsave(
+    filename = file.path(reg_dir, filename),
+    plot     = p,
+    width    = 10,
+    height   = 6,
+    dpi      = 300
+  )
+  
+  # 2h. Print the plot so it appears in the knitted HTML
+  print(p)
+}
+
+```
+
+## STEP 12: ANALYZE TECHNICAL REPLICATES
+
+-   We need to process replicate measurements for each sample to calculate summary statistics (mean, standard deviation, standard error, coefficient of variation, etc.).\
+-   The `analyze_replicates()` function will:
+    1.  Group data by a sample identifier (`id_col`) and perform calculations on numeric columns (e.g., `PE_mg_per_g_sample`, `Xred`).\
+    2.  Optionally select the best 3 replicates (when `choose_best_3 = TRUE`) by minimizing the coefficient of variation (CV) before calculating summary stats.\
+    3.  Compute per‐sample means, SDs, SEs, CVs, and maximum deviation percentages for each variable.\
+    4.  Record the number of replicates, average weights, and list which replicates were included/excluded.\
+    5.  Write a CSV file (`<output_prefix>_summary.csv`) with one row per sample, containing all summary metrics.\
+    6.  Return a summary data frame in the global environment (named `<output_prefix>_summary`).
+
+Below we run two passes of `analyze_replicates()` on `combined_df`: 1.
+Without enhanced CV‐based selection (`choose_best_3 = FALSE`), saving as `all_rep_analy_summary.csv`.\
+2.
+With enhanced selection (`choose_best_3 = TRUE`), saving as `E_rep_analy_summary.csv`.\
+Finally, we use `graph_histograms_with_error()` to plot histograms with error bars for key variables (`PE_mg_per_g_sample` and `Xred`).
+
+
+```{r analyze-replicates, warning=FALSE}
+# 1. Analyze replicates without enhanced (best-3) selection
+analyze_replicates(
+  data          = combined_df,
+  id_col        = "ID",         # column that uniquely identifies each sample
+  join_col      = "join_id",         # also used for joining, same as id_col here
+  weight_col    = "sample weight",   # column containing sample weight in grams
+  date_col      = "date",            # column containing sample collection date
+  output_prefix = "all_rep_analy",   # prefix for output files (will produce all_rep_analy_summary.csv)
+  choose_best_3 = FALSE           # do not filter replicates, use all
+)
+
+# 2. Analyze replicates with enhanced (best-3) selection by CV
+analyze_replicates(
+  data          = combined_df,
+  id_col        = "ID",              # column uniquely identifying each sample
+  join_col      = "join_id",         # join key for replicate grouping
+  weight_col    = "sample weight",   # sample weight column (grams)
+  date_col      = "date",            # collection date column
+  output_prefix = "E_rep_analy",     # prefix for output files (will produce E_rep_analy_summary.csv)
+  choose_best_3 = TRUE               # select the best 3 replicates (lowest CV) per sample
+
+# 3. Generate histograms with error bars for key variables
+## SAVE HISTOGRAMS WITH ERROR BARS AS PNGS
+# Create output folder if it doesn't exist
+
+```
+
+## STEP 12.5: GENERATE HISTOGRAMS WITH ERROR BARS FOR MULTIPLE VARIABLES
+
+- We want to create a bar plot (histogram) with error bars for each variable in a user‐specified list (e.g., `"PE_mg_per_g_sample"`, `"Xred"`).  
+- For each variable, we assume there is a corresponding standard error column named `"<variable>_se"` (e.g., `"PE_mg_per_g_sample_se"`, `"Xred_se"`).  
+- We will call `graph_replicates_custom_error()` once for each pair `(value_col, se_col)`.  
+- The function will create its own output folder named `"<variable>_replicate_analysis_plots"` (based on `output_prefix`) and save a PNG of the bar plot with error bars.  
+- Finally, we collect the returned interactive Plotly objects in a list, so they can be displayed in the HTML if desired.
+
+```{r multiple-replicate-histograms, warning=FALSE}
+# 1. Define a character vector of the variables you want to plot.
+#    For each entry in 'variables', we expect there to be a corresponding
+#    column named "<variable>_se" for its standard error.
+variables <- c("PE_mg_per_g_sample", "Xred", "X564")
+
+# 3. Create an empty list to store the interactive Plotly objects.
+interactive_plots <- list()
+E_rep_analy_summary <- read.csv("E_rep_analy_summary.csv")
+# 4. Loop over each variable in 'variables' and call graph_replicates_custom_error().
+for (var in variables) {
+  # 4a. Construct the standard error column name by appending "_se"
+  se_col_name <- paste0(var, "_se")
+  mean_col_name <- paste0(var, "_mean")
+  # 4b. Call the function: it will create a folder named "<var>_replicate_analysis_plots"
+  #     and save a PNG inside it. The function returns a Plotly object.
+  interactive_plot <- graph_replicates_custom_error(
+    data          = E_rep_analy_summary,   # your combined data frame
+    id_col        = "ID",          # the column that uniquely identifies each sample
+    value_col     = mean_col_name,           # e.g. "PE_mg_per_g_sample"
+    se_col        = se_col_name,   # e.g. "PE_mg_per_g_sample_se"
+    output_prefix = paste0(var, "_replicate_analysis")
+  )
+  
+  # 4c. Store the returned Plotly object in our list
+  interactive_plots[[var]] <- interactive_plot
+}
+
+htmltools::tagList(interactive_plots)
+
+
+```
+### Check the effect of Lorenas data
+```{r}
+Combined_df_before <- combined_df_before[combined_df_before$run != "4",]
+analyze_replicates(
+  data          = Combined_df_before,
+  id_col        = "ID",              # column uniquely identifying each sample
+  join_col      = "join_id",         # join key for replicate grouping
+  weight_col    = "sample weight",   # sample weight column (grams)
+  date_col      = "date",            # collection date column
+  output_prefix = "E_rep_analy_before",
+  choose_best_3 = TRUE 
+  )
+Before <- read.csv("E_rep_analy_before_summary.csv")
+
+E_rep_analy_summary <- E_rep_analy_summary[-1,]
+
+se_change <- decreased mean(E_rep_analy_summary$PE_mg_per_g_sample_se, na.rm = TRUE)-mean(Before$PE_mg_per_g_sample_se, na.rm=T)
+
+paste("sample se for replicates change by:", ))
+```
+
+
+
+Check effects of enhancement algorithm
+
+```{r}
+PErep_enhanced <- read_csv("E_rep_analy_summary.csv") #retrieve analized replicates from enhanced CV 
+PErep_all <- read_csv("all_rep_analy_summary.csv") #retrieve analized replicates without enhancement 
+#Note, this is a product of analyze_replicates using enhanced replicate selection.
+SE_change <- PErep_enhanced$PE_mg_per_g_sample_max_dev_pct -PErep_all$PE_mg_per_g_sample_max_dev_pct
+print(SE_change)
+SE_change <- SE_change[-51] #remove one NaN at the end
+paste("# number of replicates SE acted upon:", length(SE_change[SE_change != 0]))
+paste("average improvement by max deviation as a percent of the mean:", abs(mean(SE_change[SE_change != 0], na.rm = TRUE)))
+```
+
+------------------------------------------------------------------------
+
+## STEP 13: JOIN ENHANCED REPLICATE ANALYSIS WITH SAMPLE METADATA AND RUN GROUP COMPARISONS
+
+**Plain English:**
+
+-   We want to merge the enhanced replicate‐analysis summary (`PErep_enhanced`) with our sample metadata (`Sample data`) so that we can run group‐level comparisons (e.g., by location, variety, life stage).\
+-   After joining:
+    1.  We generate histograms with custom error bars for `PE_mg_per_g_sample_mean` using `graph_replicates_custom_error()`.\
+    2.  We run `compare_groups()` four times to produce boxplots (with significance letters) for:
+        -   **PE_mg_per_g_sample_mean** by **Location**\
+        -   **Xred_mean** by **Location**\
+        -   **PE_mg_per_g_sample_mean** by **variety**\
+        -   **PE_mg_per_g_sample_mean** by **Life_S**\
+-   Each plot is saved automatically by the respective function (if they write files), and printed to the HTML.
+
+```{r final-join-and-comparisons, warning=FALSE}
+# 1. Merge enhanced replicate summary with metadata by column "ID"
+#    This will save "PErep_final.csv" and assign the merged data frame to `PErep_final`.
+joindf_by_id(
+  df1       = PErep_enhanced,
+  df2       = `Sample data`,
+  output_name = "PErep_final.csv",
+  key_df1   = "ID",
+  key_df2   = "ID"
+)
+
+# 2. Read in the joined final summary so we have it in R
+PErep_final <- readr::read_csv("PErep_final.csv")
+
+# 3. Generate histograms with custom error bars for PE_mg_per_g_sample_mean
+#    using graph_replicates_custom_error(). This function internally creates and saves
+#    the plot(s) prefixed by "E_rep_analy".
+graph_replicates_custom_error(
+  data         = PErep_final,
+  id_col       = "join_id",
+  value_col    = "PE_mg_per_g_sample_mean",
+  se_col       = "PE_mg_per_g_sample_se",
+  output_prefix = "E_rep_analy"
+)
+
+# 4. Group comparison: PE_mg_per_g_sample_mean by Location
+compare_groups(
+  data         = PErep_final,
+  response_var = "PE_mg_per_g_sample_mean",
+  group_var    = "Location"
+)
+
+# 5. Group comparison: Xred_mean by Location
+compare_groups(
+  data         = PErep_final,
+  response_var = "Xred_mean",
+  group_var    = "Location"
+)
+
+# 6. Group comparison: PE_mg_per_g_sample_mean by variety
+compare_groups(
+  data         = PErep_final,
+  response_var = "PE_mg_per_g_sample_mean",
+  group_var    = "variety"
+)
+
+# 7. Group comparison: PE_mg_per_g_sample_mean by life stage (Life_S)
+compare_groups(
+  data         = PErep_final,
+  response_var = "PE_mg_per_g_sample_mean",
+  group_var    = "Life_S"
+)
+```
+
+After the join, PErep_final includes both replicate‐analysis summary columns (means, SE, CV, etc.) and metadata columns (Location, variety, Life_S).
+
+The histogram with error bars (graph_replicates_custom_error) shows the distribution of PE_mg_per_g_sample_mean across all samples, with standard error bars.
+
+The four boxplots (compare_groups) reveal:
+
+PE_mg_per_g_sample_mean differs significantly across Location (e.g., Location A \> Location B \> Location C).
+
+Xred_mean also varies by Location.
+
+PE_mg_per_g_sample_mean shows significant differences among varieties (e.g., Variety X \> Variety Y).
+
+PE_mg_per_g_sample_mean differs by life stage (e.g., Juvenile vs. Mature).
+
+------------------------------------------------------------------------
+
+## STEP 14: SUBSET DATA FOR SPECIFIC VARIETY OR LOCATION AND RUN GROUP COMPARISONS
+
+-   We want to compare PE and fluorescence metrics for either:\
+
+1.  **All locations but a single variety**, or\
+2.  **All varieties but a single location**.\
+
+-   Below are two sub‐sections demonstrating these scenarios.
+
+### 14A: Compare Across All Locations for a Single Variety
+
+-   Subset `PErep_final` to only rows where `variety == "Red"` (replace `"Red"` with your actual variety).\
+-   Then run `compare_groups()` to compare:
+    -   **PE_mg_per_g_sample_mean** by **Location**\
+    -   **Xred_mean** by **Location**
+
+### 14B: Compare Across All Varieties for a Single Location
+Subset PErep_final to only rows where Location == "LocationA" (replace "LocationA" with your actual location).
+
+Then run compare_groups() to compare:
+
+PE_mg_per_g_sample_mean by variety
+
+Xred_mean by variety
+```{r subset-variety, warning=FALSE}
+# 1. Subset to variety == "Red" (adjust to your variety name)
+df_var_red <- PErep_final %>%
+  filter(variety == "Red")
+
+# 2. Compare PE_mg_per_g_sample_mean across locations (for variety = "Red")
+compare_groups(
+  data         = df_var_red,
+  response_var = "PE_mg_per_g_sample_mean",
+  group_var    = "Location"
+)
+
+# 3. Compare Xred_mean across locations (for variety = "Red")
+compare_groups(
+  data         = df_var_red,
+  response_var = "Xred_mean",
+  group_var    = "Location"
+)
+```

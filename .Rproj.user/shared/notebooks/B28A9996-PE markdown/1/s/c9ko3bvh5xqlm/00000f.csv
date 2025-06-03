@@ -1,0 +1,53 @@
+"0","# Loop through both lists in parallel
+mapply(function(df1, df2, name) {
+  output_file <- paste0(name, ""_joined.csv"")
+  joindf_by_id(df1, df2, output_file, key_df1 = ""Cell_ID"", key_df2 = ""plate well"")
+}, df1 = PE_list, df2 = list_weights, name = names(listPE))
+"
+"1","
+Values needing repetition:
+Blank01 needs to be repeated
+Lab_08 needs to be repeated
+Lab_14 needs to be repeated
+Lab_16 needs to be repeated
+Lab_20 needs to be repeated
+Lab_22 needs to be repeated
+Lab_39 needs to be repeated
+Lab_45 needs to be repeated
+"
+"2","G3;Join complete. Output saved to: PE1_joined.csv
+g"
+"1","
+Values needing repetition:
+Blank02 needs to be repeated
+Blank03 needs to be repeated
+Lab_02 needs to be repeated
+Lab_03 needs to be repeated
+Lab_04 needs to be repeated
+Lab_14 needs to be repeated
+Lab_24 needs to be repeated
+Lab_26 needs to be repeated
+"
+"2","G3;Join complete. Output saved to: PE2_joined.csv
+g"
+"1","
+Values needing repetition:
+juice ilo needs to be repeated
+Lima R03 oven dry needs to be repeated
+Blank_06 needs to be repeated
+"
+"2","G3;Join complete. Output saved to: PE3_joined.csv
+g"
+"1","                   PE1_tidy                        PE2_tidy                       
+result_df          tbl_df,12                       tbl_df,10                      
+merged_cells       88                              86                             
+unmatched_cells    8                               10                             
+unmatched_saved_to ""unmatched_rows_PE1_joined.csv"" ""unmatched_rows_PE2_joined.csv""
+assigned_to_global TRUE                            TRUE                           
+                   PE3_tidy                       
+result_df          tbl_df,10                      
+merged_cells       88                             
+unmatched_cells    4                              
+unmatched_saved_to ""unmatched_rows_PE3_joined.csv""
+assigned_to_global TRUE                           
+"
