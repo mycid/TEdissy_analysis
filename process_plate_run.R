@@ -2,7 +2,8 @@
 required_packages <- c(
   "readxl", "dplyr", "tidyr", "tidyverse", "purrr", "zoo",
   "ggplot2", "lubridate", "stringr", "tools", "plotly", 
-  "here", "broom", "easystats", "performance", "ggrepel"
+  "here", "broom", "easystats", "performance", "ggrepel", 
+  "effectsize", "rlang", "boot"
 )
 #
 #
@@ -730,6 +731,343 @@ calculate_protein_from_lowry <- function(tidy_df, model, absorbance_column = "X6
   tidy_df %>%
     mutate(Protein_mg_per_mL = (.[[absorbance_column]] - coef(model)[1]) / coef(model)[2])
 }
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+compare_groups_bootstrap <- function(data,
+                                     response_var,
+                                     group_var,
+                                     facet_var     = NULL,
+                                     n_boot         = 5000,
+                                     conf_level     = 0.95,
+                                     assumptions_test = FALSE) {
+  
+  # Convert string inputs to symbols
+  response_sym <- sym(response_var)
+  group_sym    <- sym(group_var)
+  
+  if (!is.null(facet_var)) {
+    facet_sym <- sym(facet_var)
+  }
+  
+  # Ensure group is factor and response is numeric; drop rows with NA in key columns
+  df <- data %>%
+    mutate(
+      !!group_sym    := as.factor(!!group_sym),
+      !!response_sym := as.numeric(!!response_sym)
+    ) %>%
+    filter(!is.na(!!response_sym), !is.na(!!group_sym))
+  
+  # If facet_var is provided, split dataset by each facet level; else treat all as one block
+  if (!is.null(facet_var)) {
+    df_split     <- df %>% group_split(!!facet_sym)
+    facet_levels <- df %>% pull(!!facet_sym) %>% as.character() %>% unique()
+  } else {
+    df_split     <- list(df)
+    facet_levels <- "ALL"
+  }
+  
+  # Utility: bootstrap‐statistic function for a single group’s mean
+  boot_mean_fn <- function(dat, indices) {
+    d_sub <- dat[indices]
+    return(mean(d_sub))
+  }
+  
+  # Utility: compute pairwise effect‐size bootstraps (raw mean diff & Cohen’s d)
+  compute_effsize_boot <- function(x, y, n_boot, conf_level) {
+    pooled  <- c(x, y)
+    grp_ind <- c(rep(1, length(x)), rep(2, length(y)))
+    dat_for_boot <- data.frame(val = pooled, grp = grp_ind)
+    
+    # (1) Raw mean‐difference bootstrap
+    stat_mean_diff <- function(d, i) {
+      d2 <- d[i, ]
+      m1 <- mean(d2$val[d2$grp == 1])
+      m2 <- mean(d2$val[d2$grp == 2])
+      return(m1 - m2)
+    }
+    boot_mean_diff <- boot(data = dat_for_boot, statistic = stat_mean_diff, R = n_boot)
+    mean_diff_ci  <- boot.ci(boot_mean_diff, conf = conf_level, type = "perc")
+    
+    mean_diff_est   <- mean(x) - mean(y)
+    mean_diff_lower <- mean_diff_ci$percent[4]
+    mean_diff_upper <- mean_diff_ci$percent[5]
+    
+    # (2) Cohen’s d bootstrap (pooled‐SD version)
+    cohen_d_stat <- function(d, i) {
+      d2 <- d[i, ]
+      x2 <- d2$val[d2$grp == 1]
+      y2 <- d2$val[d2$grp == 2]
+      coh <- cohens_d(x2, y2, pooled_sd = TRUE)
+      return(coh$Cohens_d)
+    }
+    boot_cohend   <- boot(data = dat_for_boot, statistic = cohen_d_stat, R = n_boot)
+    cohen_d_ci    <- boot.ci(boot_cohend, conf = conf_level, type = "perc")
+    
+    cohens_d_est   <- cohens_d(x, y, pooled_sd = TRUE)$Cohens_d
+    cohens_d_lower <- cohen_d_ci$percent[4]
+    cohens_d_upper <- cohen_d_ci$percent[5]
+    
+    return(tibble(
+      mean_diff       = mean_diff_est,
+      mean_diff_lower = mean_diff_lower,
+      mean_diff_upper = mean_diff_upper,
+      cohens_d        = cohens_d_est,
+      cohens_d_lower  = cohens_d_lower,
+      cohens_d_upper  = cohens_d_upper
+    ))
+  }
+  
+  # Prepare storage for summaries and plots
+  all_summaries <- list()
+  all_plots     <- list()
+  
+  # Iterate over each facet (or single “ALL” block)
+  for (i in seq_along(df_split)) {
+    sub_df     <- df_split[[i]]
+    facet_name <- facet_levels[i]
+    
+    # Identify group levels within this facet
+    grp_levels <- levels(sub_df[[group_var]])
+    
+    # --------------------------------------
+    # 1) Bootstrap each group’s mean + keep the boot objects
+    # --------------------------------------
+    group_boot_list <- map(grp_levels, function(g) {
+      vals     <- sub_df %>% filter((!!group_sym) == g) %>% pull(!!response_sym)
+      boot_res <- boot(data = vals, statistic = boot_mean_fn, R = n_boot)
+      
+      # Extract CI
+      ci <- boot.ci(boot_res, conf = conf_level, type = "perc")
+      tibble(
+        group     = g,
+        mean_est  = mean(vals),
+        ci_lower  = ci$percent[4],
+        ci_upper  = ci$percent[5],
+        n         = length(vals),
+        boot_obj  = list(boot_res)   # store the boot object
+      )
+    }) %>%
+      bind_rows()
+    
+    # Extract a clean summary of means ± CI (dropping the boot objects themselves)
+    group_boot_res <- group_boot_list %>%
+      select(group, mean_est, ci_lower, ci_upper, n)
+    
+    # --------------------------------------
+    # 2) Pairwise effect‐size bootstraps
+    # --------------------------------------
+    pairwise <- combn(grp_levels, 2, simplify = FALSE) %>%
+      set_names(map_chr(., ~ paste0(.x[1], "_vs_", .x[2]))) %>%
+      map_dfr(function(pair) {
+        x <- sub_df %>% filter((!!group_sym) == pair[1]) %>% pull(!!response_sym)
+        y <- sub_df %>% filter((!!group_sym) == pair[2]) %>% pull(!!response_sym)
+        
+        compute_effsize_boot(x, y, n_boot, conf_level) %>%
+          mutate(
+            group1 = pair[1],
+            group2 = pair[2]
+          )
+      })
+    
+    # --------------------------------------
+    # 3) (Optional) Assumptions tests & bootstrap‐distribution plot
+    # --------------------------------------
+    assumption_plot <- NULL
+    bartlett_test   <- NULL
+    
+    if (assumptions_test) {
+      # 3a) Combine bootstrap replicates of group means into one data frame
+      boot_dists_df <- group_boot_list %>%
+        select(group, boot_obj) %>%
+        unnest_longer(boot_obj) %>% 
+        # boot_obj is a list; each entry is a 'boot' object whose $t is a matrix (n_boot × 1)
+        mutate(boot_mean = map_dbl(boot_obj, ~ .x$t[, 1])) %>%
+        select(group, boot_mean)
+      
+      # 3b) Plot the bootstrap distributions of group means (faceted by group)
+      assumption_plot <- ggplot(boot_dists_df, aes(x = boot_mean, fill = group)) +
+        geom_density(alpha = 0.5) +
+        facet_wrap(~ group, scales = "free") +
+        theme_minimal() +
+        labs(
+          title = paste0("Bootstrap Distribution of Group Means (", response_var, ") [", facet_name, "]"),
+          x     = paste("Bootstrapped means of", response_var),
+          y     = "Density"
+        ) +
+        theme(legend.position = "none")
+      
+      # 3c) Run Bartlett’s test for homogeneity of variances (exploratory)
+      bartlett_test <- tryCatch(
+        {
+          bartlett.test(
+            formula = as.formula(paste(response_var, "~", group_var)),
+            data    = sub_df
+          )
+        },
+        error = function(e) {
+          warning("Bartlett's test failed: ", e$message)
+          return(NULL)
+        }
+      )
+    }
+    
+    # --------------------------------------
+    # 4) Assemble this facet’s summary
+    # --------------------------------------
+    summary_this <- list(
+      facet                 = facet_name,
+      group_bootstrap_means = group_boot_res,
+      pairwise_effectsizes  = pairwise,
+      bartlett_test         = bartlett_test
+    )
+    
+    # --------------------------------------
+    # 5) Create the main plots
+    # --------------------------------------
+    # 5a) Plot 1: Bootstrapped group means ± CI
+    p1 <- ggplot(group_boot_res, aes(x = group, y = mean_est)) +
+      geom_point(size = 3, color = "steelblue") +
+      geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper),
+                    width = 0.25, color = "steelblue") +
+      theme_minimal() +
+      labs(
+        title = paste0("Bootstrapped Means ± ", conf_level*100, "% CI (", facet_name, ")"),
+        x     = group_var,
+        y     = paste0("Mean of ", response_var)
+      ) +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+    
+    # 5b) Plot 2: Pairwise effect sizes (mean_diff & Cohen’s d) ± CI
+    pairwise_plot_data <- pairwise %>%
+      pivot_longer(cols = c(mean_diff, cohens_d),
+                   names_to   = "metric",
+                   values_to  = "estimate") %>%
+      mutate(
+        lower      = if_else(metric == "mean_diff", mean_diff_lower, cohens_d_lower),
+        upper      = if_else(metric == "mean_diff", mean_diff_upper, cohens_d_upper),
+        comparison = paste0(group1, " vs ", group2)
+      )
+    
+    p2 <- ggplot(pairwise_plot_data, aes(x = comparison, y = estimate, color = metric)) +
+      geom_point(position = position_dodge(width = 0.5), size = 3) +
+      geom_errorbar(aes(ymin = lower, ymax = upper),
+                    position = position_dodge(width = 0.5),
+                    width    = 0.2) +
+      coord_flip() +
+      theme_minimal() +
+      labs(
+        title = paste0("Pairwise Effect Sizes ± ", conf_level*100, "% CI (", facet_name, ")"),
+        x     = "Comparison",
+        y     = "Estimate"
+      ) +
+      scale_color_manual(
+        values = c("mean_diff" = "darkgreen", "cohens_d" = "firebrick"),
+        labels = c("Mean Difference", "Cohen's d"),
+        name   = NULL
+      )
+    
+    # 5c) If assumptions_test = TRUE, include the bootstrap‐distribution plot as well
+    if (assumptions_test) {
+      all_plots[[facet_name]] <- list(
+        boot_means_plot       = p1,
+        pairwise_effects_plot = p2,
+        boot_dist_plot        = assumption_plot
+      )
+    } else {
+      all_plots[[facet_name]] <- list(
+        boot_means_plot       = p1,
+        pairwise_effects_plot = p2,
+        boot_dist_plot        = NULL
+      )
+    }
+    
+    # 6) Store this facet’s summary
+    all_summaries[[facet_name]] <- summary_this
+  }
+  
+  # Return a list containing:
+  #  - $summary:    a named list of summaries (one per facet), including group means, pairwise effects, and Bartlett’s test object (if run)
+  #  - $plots:      a named list of lists (one per facet) containing:
+  #                  • boot_means_plot
+  #                  • pairwise_effects_plot
+  #                  • boot_dist_plot (NULL unless assumptions_test = TRUE)
+  return(list(
+    summary = all_summaries,
+    plots   = all_plots
+  ))
+}
+
+
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+# ── (Optional) Function to also add standard‐error-of‐fit using the clean Run 2 model ────────
+
+#' add_PE_with_se
+#'
+#' Given a dataframe containing a column of fluorescence values (Xred),
+#' adds two new columns:
+#'   1) Predicted PE (mg/g) based on the cleaned Run 2 model
+#'   2) Standard error of the fitted mean (SE) for each prediction
+#'
+#' @param df        A data frame.
+#' @param fluor_col String: name of the column in df containing the fluorescence (Xred) values.
+#' @param pred_col  String: name of the new predicted PE column.
+#' @param se_col    String: name of the new standard‐error column.
+#' @return          A new data frame with additional columns `pred_col` and `se_col`.
+add_PE_with_se <- function(df, fluor_col = "Xred",
+                           pred_col = "PE_pred_run2_mg_per_g",
+                           se_col   = "PE_se_run2") {
+  # Build a newdata frame for prediction
+  newdata <- df %>%
+    transmute(!!sym(fluor_col) := .data[[fluor_col]])
+  
+  # Use predict.lm with se.fit = TRUE
+  preds <- predict(model_clean_run2, newdata = newdata, se.fit = TRUE)
+  
+  # Attach predicted values and SE to the original df
+  df[[pred_col]] <- preds$fit
+  df[[se_col]]   <- preds$se.fit
+  return(df)
+}
+
+# Example: apply to the master dataset
+df_combined <- add_PE_with_se(df_combined,
+                              fluor_col = "Xred",
+                              pred_col  = "PE_pred_run2_mg_per_g",
+                              se_col    = "PE_se_run2")
+
+# View the first few rows to confirm
+df_combined %>%
+  select(join_id, run, Xred, PE_mg_per_g_sample,
+         PE_pred_run2_mg_per_g, PE_se_run2) %>%
+  head(10) %>%
+  print()
+
 
 
 

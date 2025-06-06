@@ -578,7 +578,7 @@ pe_fluor_all <- Map(function(df, i) {
 # Find common columns across all runs
 common_cols <- Reduce(intersect, lapply(pe_fluor_all, names))
 
-# Optional: harmonize date columns if needed
+#harmonize date columns
 pe_fluor_all <- lapply(pe_fluor_all, function(df) {
   df[] <- lapply(df, function(col) {
     is_colname_date <- grepl("date", names(df)[which(sapply(df, identical, col))], ignore.case = TRUE)
@@ -603,6 +603,7 @@ combined_df <- bind_rows(
 #Scale PE bigger for regression purposes
 combined_df <- combined_df %>%
   mutate(PE_scaled = PE_mg_per_g_sample * 1000)
+
 
 ```
 
@@ -666,26 +667,168 @@ Outliers beyond PE = 0.5 mg/g are clipped from view but still exist in the datas
 -   We then assign `"run 3 fresh"` to samples in rows 169–189 (adjust indices if your row count shifts).
 
 ```{r clean-factor-levels}
-# 1. Remove unwanted rows (190 to 194)
-combined_df <- combined_df[-(191:194), ]
-#
+combined_df <- combined_df[!is.na(combined_df$PE_mg_per_g_sample), ]
 
-# 2. Add a new factor level "run 3 fresh" to the 'run' factor
+
+
+# 1. Add a new factor level "run 3 fresh" to the 'run' factor
 levels(combined_df$run) <- c(levels(combined_df$run), "fresh run 3 & 4")
 
-# 3. Assign "run 3 fresh" to rows 169:189
-combined_df$run[169:189] <- "fresh run 3 & 4"
-#
-combined_df$run[209:213] <- "fresh run 3 & 4"
+# 2. Assign "fresh run 3 & 4 to fresh samples only. 
+combined_df$run[grepl("fresh", combined_df$ID, ignore.case = TRUE)] <- "fresh run 3 & 4"
 
-combined_df <- combined_df[-(214:215), ]
+# 3. Remove rows with NA values for PE mg. There was fluoresence data, but no phycoerythrin
+combined_export_path <- file.path("output PE", "export data", "combined_df.csv")
+write.csv(combined_df, combined_export_path, row.names = FALSE)
 ```
 
-Rows 190–194 have been dropped from combined_df.
 
-A new level "run 3 fresh" has been added, and samples in rows 169–189 are now labeled as "run 3 fresh".
-
+A new level "run 3 fresh" has been added
+## Fluoresence phycoerythrin estimation fitting
+```{r}
+# ── Subset to run 2, drop missing PE/Xred, and filter PE ≥ 10 µg/g (i.e. ≥ 0.01 mg/g) ─────
+df_run2 <- df_combined %>%
+  filter(run == "2") %>%                                  # keep only run 2
+  drop_na(PE_mg_per_g_sample, Xred) %>%                   # drop any NA in PE or Xred
+  filter(PE_mg_per_g_sample >= 0.01)                       # remove PE < 0.01 mg/g
 ## STEP 11: REGRESSION MODELS BY RUN
+# ── Fit an initial OLS (PE_mg_per_g_sample ~ Xred) and flag statistical outliers ─────────
+model_initial_run2 <- lm(PE_mg_per_g_sample ~ Xred, data = df_run2)
+
+df_run2 <- df_run2 %>%
+  mutate(
+    resid_initial = residuals(model_initial_run2),
+    std_resid      = rstandard(model_initial_run2),
+    is_outlier     = abs(std_resid) >= 2
+  )
+
+# How many points and how many outliers?
+df_run2 %>%
+  summarize(
+    total_points = n(),
+    n_outliers   = sum(is_outlier),
+    pct_outliers = mean(is_outlier) * 100
+  ) %>%
+  print()
+
+# (Optional) Visualize initial model with outliers highlighted
+ggplot(df_run2, aes(x = Xred, y = PE_mg_per_g_sample, color = is_outlier)) +
+  geom_point(size = 2, alpha = 0.7) +
+  scale_color_manual(values = c("FALSE" = "steelblue", "TRUE" = "firebrick")) +
+  geom_abline(
+    slope     = coef(model_initial_run2)["Xred"],
+    intercept = coef(model_initial_run2)["(Intercept)"],
+    color     = "darkgreen", size = 1
+  ) +
+  labs(
+    title    = "Run 2: Initial PE vs. Xred (Red = |Std Resid| ≥ 2)",
+    x        = "Xred (raw fluorescence)",
+    y        = "PE (mg per g sample)"
+  ) +
+  theme_minimal()
+# ── Remove flagged outliers and refit the “clean” calibration model ───────────────────────
+df_run2_clean <- df_run2 %>%
+  filter(!is_outlier)
+
+model_clean_run2 <- lm(PE_mg_per_g_sample ~ Xred, data = df_run2_clean)
+
+# Summarize the clean model
+tidy(model_clean_run2) %>% print()
+summary(model_clean_run2)$r.squared %>% print()
+
+# Visualize the final fit on run 2 (outliers removed)
+ggplot(df_run2_clean, aes(x = Xred, y = PE_mg_per_g_sample)) +
+  geom_point(color = "steelblue", size = 2, alpha = 0.7) +
+  geom_smooth(method = "lm", color = "darkgreen", se = FALSE) +
+  labs(
+    title = "Run 2: Final Calibration (Outliers Removed)",
+    x     = "Xred (raw fluorescence)",
+    y     = "PE (mg per g sample)"
+  ) +
+  theme_minimal()
+# ── Define a function to add fluorescence‐predicted PE to any dataframe ──────────────────
+
+# Extract coefficients from the clean run‐2 model
+coef_intercept <- coef(model_clean_run2)["(Intercept)"]
+coef_slope     <- coef(model_clean_run2)["Xred"]
+
+#' calc_PE_from_Xred
+#'
+#' Given a dataframe containing a column of fluorescence values (Xred),
+#' adds a new column with predicted PE (mg/g) based on the cleaned Run 2 calibration.
+#'
+#' @param df        A data frame.
+#' @param fluor_col String: name of the column in df containing the fluorescence (Xred) values.
+#' @param new_col   String: desired name for the new predicted PE column (default = "PE_predicted_mg_per_g").
+#' @return          A new data frame with an additional column `new_col`.
+calc_PE_from_Xred <- function(df, fluor_col = "Xred", new_col = "PE_predicted_mg_per_g") {
+  intercept <- coef_intercept
+  slope     <- coef_slope
+
+  # Ensure the fluorescence column exists
+  if (!fluor_col %in% names(df)) {
+    stop(glue::glue("Column '{fluor_col}' not found in the input data frame."))
+  }
+
+  # Compute predicted PE and add as a new column
+  df[[new_col]] <- intercept + slope * df[[fluor_col]]
+  return(df)
+}
+
+# Example: apply to the master dataset
+df_combined <- calc_PE_from_Xred(df_combined, fluor_col = "Xred", new_col = "PE_pred_run2_mg_per_g")
+
+# View the first few rows to confirm
+df_combined %>%
+  select(join_id, run, Xred, PE_mg_per_g_sample, PE_pred_run2_mg_per_g) %>%
+  head(10) %>%
+  print()
+# ── (Optional) Function to also add standard‐error-of‐fit using the clean Run 2 model ────────
+
+#' add_PE_with_se
+#'
+#' Given a dataframe containing a column of fluorescence values (Xred),
+#' adds two new columns:
+#'   1) Predicted PE (mg/g) based on the cleaned Run 2 model
+#'   2) Standard error of the fitted mean (SE) for each prediction
+#'
+#' @param df        A data frame.
+#' @param fluor_col String: name of the column in df containing the fluorescence (Xred) values.
+#' @param pred_col  String: name of the new predicted PE column.
+#' @param se_col    String: name of the new standard‐error column.
+#' @return          A new data frame with additional columns `pred_col` and `se_col`.
+add_PE_with_se <- function(df, fluor_col = "Xred",
+                            pred_col = "PE_pred_run2_mg_per_g",
+                            se_col   = "PE_se_run2") {
+  # Build a newdata frame for prediction
+  newdata <- df %>%
+    transmute(!!sym(fluor_col) := .data[[fluor_col]])
+
+  # Use predict.lm with se.fit = TRUE
+  preds <- predict(model_clean_run2, newdata = newdata, se.fit = TRUE)
+
+  # Attach predicted values and SE to the original df
+  df[[pred_col]] <- preds$fit
+  df[[se_col]]   <- preds$se.fit
+  return(df)
+}
+
+# Example: apply to the master dataset
+df_combined <- add_PE_with_se(df_combined,
+                              fluor_col = "Xred",
+                              pred_col  = "PE_pred_run2_mg_per_g",
+                              se_col    = "PE_se_run2")
+
+# View the first few rows to confirm
+df_combined %>%
+  select(join_id, run, Xred, PE_mg_per_g_sample,
+         PE_pred_run2_mg_per_g, PE_se_run2) %>%
+  head(10) %>%
+  print()
+
+```
+
+
 
 For each unique run in `combined_df`, we will:\
 1.
@@ -1034,31 +1177,149 @@ PE_mg_per_g_sample_mean by variety
 
 Xred_mean by variety
 ```{r subset-variety, warning=FALSE}
-# 1. Create export folder for "Red" variety comparisons
-red_comp_dir <- file.path("PE", "output_PE", "export data", "PErep_comparisons_red")
-dir.create(red_comp_dir, recursive = TRUE, showWarnings = FALSE)
+# 📁 1. Create export folder for comparison results
+comparison_dir <- file.path("PE", "output_PE", "export data", "PErep_comparisons")
+dir.create(comparison_dir, recursive = TRUE, showWarnings = FALSE)
 
-# 2. Subset data for life stage == "gam/Tetra"
-df_var_gamtetra <- PErep_final %>%
+# 📊 2. Subset data: gametophyte/tetrasporophyte life stages
+df_gamtetra <- PErep_final %>%
   filter(Life_S %in% c("Gam/Tetra", "Gam", "Tetra"))
 
-# 3. Compare PE_mg_per_g_sample_mean across locations
-res_pe_location <- compare_groups(
-  data         = df_var_gamtetra,
+# 📈 3. Compare PE across locations for gametophyte/tetrasporophyte
+res_gamtetra_PE <- compare_groups(
+  data         = df_gamtetra,
   response_var = "PE_mg_per_g_sample_mean",
   group_var    = "Location"
 )
+cat("### PE comparison by Location (Gam/Tetra)\n")
+print(res_gamtetra_PE)
+write.csv(res_gamtetra_PE, file = file.path(comparison_dir, "PE_by_location_gamtetra.csv"), row.names = FALSE)
 
-# Save the result as CSV (optional)
-#write.csv(res_pe_location, file = file.path(red_comp_dir, "PE_by_location.csv"), row.names = FALSE)
-
-# 4. Compare Xred_mean across locations
-res_xred_location <- compare_groups(
-  data         = df_var_gamtetra,
+# 📈 4. Compare Xred across locations for gametophyte/tetrasporophyte
+res_gamtetra_Xred <- compare_groups(
+  data         = df_gamtetra,
   response_var = "Xred_mean",
   group_var    = "Location"
 )
+cat("### Xred comparison by Location (Gam/Tetra)\n")
+print(res_gamtetra_Xred)
+write.csv(res_gamtetra_Xred, file = file.path(comparison_dir, "Xred_by_location_gamtetra.csv"), row.names = FALSE)
 
-# Save the result as CSV
-#write.csv(res_xred_location, file = file.path(red_comp_dir, "Xred_by_location.csv"), row.names = FALSE)
+# 📊 5. Subset data: carpogonium life stage
+df_carp <- PErep_final %>%
+  filter(Life_S == "Carp")
+
+# 📈 6. Compare PE across locations for carpogonium
+res_carp_PE <- compare_groups(
+  data         = df_carp,
+  response_var = "PE_mg_per_g_sample_mean",
+  group_var    = "Location"
+)
+cat("### PE comparison by Location (Carpogonium)\n")
+print(res_carp_PE)
+write.csv(res_carp_PE, file = file.path(comparison_dir, "PE_by_location_carp.csv"), row.names = FALSE)
+
+# 📊 7. Subset data: C. chamissoi variety
+df_cham <- PErep_final %>%
+  filter(variety == "C.Cham")
+
+# 📈 8. Compare PE across locations for C.Cham
+res_cham_PE <- compare_groups(
+  data         = df_cham,
+  response_var = "PE_mg_per_g_sample_mean",
+  group_var    = "Location"
+)
+cat("### PE comparison by Location (C.Cham variety)\n")
+print(res_cham_PE)
+write.csv(res_cham_PE, file = file.path(comparison_dir, "PE_by_location_cham.csv"), row.names = FALSE)
+
+# 📊 9. Subset data: F. glomerata variety
+df_glom <- PErep_final %>%
+  filter(variety == "F. Glom")
+
+# 📈 10. Compare PE across locations for F.Glom
+res_glom_PE <- compare_groups(
+  data         = df_glom,
+  response_var = "PE_mg_per_g_sample_mean",
+  group_var    = "Location"
+)
+cat("### PE comparison by Location (F. Glom variety)\n")
+print(res_glom_PE)
+write.csv(res_glom_PE, file = file.path(comparison_dir, "PE_by_location_glom.csv"), row.names = FALSE)
+
+# 📊 11. Subset by selected locations only
+df_selected_sites <- PErep_final %>%
+  filter(Location %in% c("Mendieta", "7H", "Caro Caido"))
+
+# 📈 12. Compare PE across selected sites
+res_sites_PE <- compare_groups(
+  data         = df_selected_sites,
+  response_var = "PE_mg_per_g_sample_mean",
+  group_var    = "Location"
+)
+cat("### PE comparison across Mendieta, 7H, and Caro Caido\n")
+print(res_sites_PE)
+write.csv(res_sites_PE, file = file.path(comparison_dir, "PE_by_location_selected_sites.csv"), row.names = FALSE)
 ```
+##Step 14: Bootsrapped comparison
+## Example: Bootstrapped Group Comparisons with `compare_groups_bootstrap`
+
+In this chunk, we:
+
+1. **Load** or attach your data (e.g. a CSV or whichever source you use).  
+2. **Call** `compare_groups_bootstrap()` to compute 95% bootstrapped confidence intervals and effect sizes (mean differences and Cohen’s _d_) for a response variable across treatment groups.  
+3. **Inspect** the returned summary tables (bootstrapped means + CIs, pairwise effect sizes + CIs).  
+4. **Plot** the two ggplots (group‐means with CIs, and pairwise effect‐size estimates with CIs).  
+5. Optionally, **arrange** both plots side‐by‐side using `patchwork`.
+
+```{r}
+# 1. Load your data into R. 
+#    (Replace the path or method below with however you import your dataset.)
+#    This should produce a data.frame named `PErep_final` with at least:
+#      • A numeric column "PE_mg_per_g_sample_mean" 
+#      • A factor/character column "Location"
+PErep_final <- read.csv("path/to/your/PErep_final.csv")
+
+# 2. Call compare_groups_bootstrap() to run bootstrapped analyses.
+#    - data:       the data.frame (PErep_final)
+#    - response_var: the numeric response column (PE_mg_per_g_sample_mean)
+#    - group_var:    the factor/“treatment” column (Location)
+#    - facet_var = NULL: means no faceting; run as a single overall analysis
+#    - n_boot = 5000:       number of bootstrap resamples (adjust if speed is an issue)
+#    - conf_level = 0.95:   95% confidence intervals
+res <- compare_groups_bootstrap(
+  data         = PErep_final,
+  response_var = "PE_mg_per_g_sample_mean",
+  group_var    = "Location",
+  facet_var    = NULL,       
+  n_boot       = 5000,       
+  conf_level   = 0.95        
+)
+
+# 3. Inspect the structure of the returned summaries:
+#    - `res$summary` is a named list. If no facet_var was used, it will have a single element "ALL".
+names(res$summary)              
+#    • Should print: "ALL"  
+
+# 3a. View bootstrapped means and CIs for each group:
+res$summary$ALL$group_bootstrap_means
+#    • A tibble with columns: group, mean_est, ci_lower, ci_upper, and n (sample size).
+
+# 3b. View pairwise effect‐size estimates (mean_diff, cohens_d + their CIs) for every pair of groups:
+res$summary$ALL$pairwise_effectsizes
+#    • A tibble with: group1, group2, mean_diff, mean_diff_lower, mean_diff_upper,
+#                     cohens_d, cohens_d_lower, cohens_d_upper.
+
+# 4. Plotting:
+#    - `res$plots$ALL$boot_means_plot` shows each group’s bootstrapped mean ± 95% CI.
+#    - `res$plots$ALL$pairwise_effects_plot` shows pairwise estimates (mean_diff & Cohen’s d) ± 95% CI.
+res$plots$ALL$boot_means_plot
+res$plots$ALL$pairwise_effects_plot
+
+# 5. (Optional) Arrange the two plots side‐by‐side using patchwork:
+#    • install.packages("patchwork") if you don’t already have it.
+#    • Then:
+library(patchwork)
+res$plots$ALL$boot_means_plot + res$plots$ALL$pairwise_effects_plot
+```
+
