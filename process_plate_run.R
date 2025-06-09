@@ -352,50 +352,44 @@ calculate_pe_and_filter <- function(tidy_df,
 #
 #
 #
-joindf_by_id <- function(df1, df2, 
-                         output_name,          # full path to joined CSV
-                         unmatched_out,        # full path to unmatched CSV
-                         key_df1, 
-                         key_df2, 
-                         assign_to_global = TRUE) {
+joindf_by_id <- function(df1,
+                         df2,
+                         key_df1,
+                         key_df2,
+                         output_name     = NULL,
+                         unmatched_out   = NULL) {
   
-  # Clean column names
-  colnames(df1) <- trimws(colnames(df1))
-  colnames(df2) <- trimws(colnames(df2))
+  # Warn if "join_id" already exists
+  if ("join_id" %in% names(df1)) warning("'join_id' column in df1 will be overwritten.")
+  if ("join_id" %in% names(df2)) warning("'join_id' column in df2 will be overwritten.")
   
-  # Validate keys
-  if (!(key_df1 %in% colnames(df1))) stop(paste0("Error: '", key_df1, "' not found in df1."))
-  if (!(key_df2 %in% colnames(df2))) stop(paste0("Error: '", key_df2, "' not found in df2."))
+  # Drop any existing 'join_id' column before renaming
+  df1 <- df1 %>% select(-any_of("join_id"))
+  df2 <- df2 %>% select(-any_of("join_id"))
   
-  # Rename join columns
-  df1_renamed <- df1 %>% dplyr::rename(join_id = all_of(key_df1))
-  df2_renamed <- df2 %>% dplyr::rename(join_id = all_of(key_df2))
+  # Rename ID columns to a common name for joining
+  df1_renamed <- df1 %>% rename(join_id = all_of(key_df1))
+  df2_renamed <- df2 %>% rename(join_id = all_of(key_df2))
   
-  # Join and identify unmatched
-  if (nrow(df1_renamed) <= nrow(df2_renamed)) {
-    result <- dplyr::left_join(df1_renamed, df2_renamed, by = "join_id")
-    base_ids <- df1_renamed$join_id
-    compare_ids <- df2_renamed$join_id
-    unmatched_df <- dplyr::filter(df2_renamed, !(join_id %in% base_ids))
-  } else {
-    result <- dplyr::left_join(df2_renamed, df1_renamed, by = "join_id")
-    base_ids <- df2_renamed$join_id
-    compare_ids <- df1_renamed$join_id
-    unmatched_df <- dplyr::filter(df1_renamed, !(join_id %in% base_ids))
+  # Perform the join
+  joined <- full_join(df1_renamed, df2_renamed, by = "join_id")
+  
+  # Write final joined data if path is provided
+  if (!is.null(output_name)) {
+    write.csv(joined, output_name, row.names = FALSE)
   }
   
-  # Save results
-  write.csv(result, output_name, row.names = FALSE)
-  write.csv(unmatched_df, unmatched_out, row.names = FALSE)
-  
-  # Assign to global environment
-  object_name <- tools::file_path_sans_ext(basename(output_name))
-  if (assign_to_global) {
-    assign(object_name, result, envir = .GlobalEnv)
+  # Identify and optionally save unmatched rows (e.g., missing from df2)
+  if (!is.null(unmatched_out)) {
+    df2_cols <- setdiff(names(df2_renamed), "join_id")
+    unmatched <- joined %>%
+      filter(if_any(all_of(df2_cols), ~ is.na(.x)))
+    write.csv(unmatched, unmatched_out, row.names = FALSE)
   }
   
-  
-  # Summary report
+  return(joined)
+
+   # Summary report
   report <- list(
     result_df = result,
     merged_cells = sum(compare_ids %in% base_ids),
@@ -1299,6 +1293,7 @@ save_object <- function(object,
   # Determine file extension
   if (is.null(format)) {
     format <- if (inherits(object, "ggplot")) "png"
+    else if (inherits(object, "plotly")) "html"
     else if (is.data.frame(object)) "csv"
     else "rds"
   }
@@ -1308,6 +1303,8 @@ save_object <- function(object,
   # Save the object
   if (inherits(object, "ggplot") && format %in% c("png", "pdf", "svg", "jpeg")) {
     ggsave(filename = out_path, plot = object, ...)
+  } else if (inherits(object, "plotly") && format == "html") {
+    htmlwidgets::saveWidget(object, file = out_path, selfcontained = TRUE, ...)
   } else if (is.data.frame(object) && format == "csv") {
     write.csv(object, out_path, row.names = FALSE, ...)
   } else if (format == "rds") {
@@ -1318,8 +1315,6 @@ save_object <- function(object,
   
   invisible(out_path)
 }
-
-
 
 
 

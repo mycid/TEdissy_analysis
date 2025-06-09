@@ -268,7 +268,7 @@ pr_combined_clean <- pr_combined %>%
 ## Analyze Replicates
 ```{r}
 analyze_replicates(
-  data          = pr_combined,
+  data          = pr_combined_clean,
   id_col        = "ID",         # column that uniquely identifies each sample
   join_col      = "join_id",         # also used for joining, same as id_col here
   weight_col    = "weights",   # column containing sample weight in grams
@@ -305,19 +305,102 @@ protein_plot <- graph_replicates_custom_error(
 
 # 5. Save interactive plot using your custom save_object function
 save_object(
-  object     = protein_plot,
-  folder     = protein_plot_dir,
-  file_name  = paste0(protein_var, "_replicate_plot")
+  object    = protein_plot,
+  filename  = paste0(protein_var, "_replicate_plot"),  # e.g. "Protein_replicate_plot"
+  directory = "plots",
+  format    = "html",
+  subdir    = "replicate_analysis/protein",  # This goes inside plot_dir
 )
 
 # 6. Display plot in HTML report
 protein_plot
+#
+protein_summary %>%
+  summarise(
+    total_rows      = n(),
+    high_cv_count   = sum(Protein_mg_per_g_cv > 0.2, na.rm = TRUE),
+    average_cv   = mean(Protein_mg_per_g_cv, na.rm = TRUE),
+    high_cv_percent = mean(Protein_mg_per_g_cv > 0.2, na.rm = TRUE) * 100
+  )
 
 ```
-## Visualize Protein Content Across Replicates
+## Analize protein content by sample
 ```{r}
-graph_replicates_custom_error(rep_summary,
-                              id_col = "ID",
-                              value_col = "Protein_mg_per_mL_mean",
-                              se_col = "Protein_mg_per_mL_se")
+# 1. Merge enhanced replicate summary with metadata by column "ID"
+#    This will save "PErep_final.csv" and assign the merged data frame to `PErep_final`.
+# 1. Define export folder and create it if needed
+final_export_dir <- file.path("output PE", "export data", "Samples Analysis Final")
+dir.create(final_export_dir, recursive = TRUE, showWarnings = FALSE)
+
+#
+
+# 2. Join PErep_enhanced with Sample data
+joindf_by_id(
+  df1          = protein_summary,
+  df2          = `Sample data`,
+  output_name  = file.path(final_export_dir, "pr_rep_final.csv"),
+  unmatched_out = file.path(final_export_dir, "Pr_rep_unmatched.csv"),
+  key_df1      = "ID",
+  key_df2      = "ID"
+)
+
+# 4. Define output directory for replicate analysis plots
+rep_plot_dir <- file.path("output prot", "plots", "replicate_analysis")
+dir.create(rep_plot_dir, recursive = TRUE, showWarnings = FALSE)
+
+# 5. Generate histogram with error bars for PE_mg_per_g_sample_mean
+graph_replicates_custom_error(
+  data          = pr_rep_final,
+  id_col        = "Location",
+  value_col     = "Protein_mg_per_g_mean",
+  se_col        = "Protein_mg_per_g_se",
+  output_prefix = file.path(rep_plot_dir, "protein_rep_analy_bylocation")
+)
+
+pr_location <- pr_rep_final %>%
+  filter(!Location %in% c("Lima Market Freeze Dry", "Ilo Freeze Dry", "Ilo oven dry", "Ilo Fresh", "Lima Market Fresh"))
+
+pr_location_cham <- pr_rep_final %>%
+  filter(!variety %in% c("F.Glom"))
+# 6. Run group comparisons and print outputs
+
+###################################################Location
+compare_groups(
+  data         = pr_location_cham,
+  response_var = "Protein_mg_per_g_mean",
+  group_var    = "Location",
+  subfolder_name = "pr_Location_cham"
+)
+
+################################################Life_S
+compare_groups(
+  data         = pr_location_cham,
+  response_var = "Protein_mg_per_g_mean",
+  group_var    = "Life_S",
+  subfolder_name = "pr_Life_S_cham"
+)
+
+###########################################Variety
+pr_paracas_marcona <- pr_rep_final %>%
+  filter(Location %in% c("Mendieta", "7H", "Caro Caido"))
+
+compare_groups(
+  data         = pr_paracas_marcona,
+  response_var = "Protein_mg_per_g_mean",
+  group_var    = "variety",
+  subfolder_name = "pr_variety"
+)
+
+#################################Gam Cham
+
+pr_gamtetra <- pr_location %>%
+  filter(Life_S %in% c("Gam/Tetra", "Gam", "Tetra"))
+
+compare_groups(
+  data         = pr_gamtetra,
+  response_var = "Protein_mg_per_g_mean",
+  group_var    = "Location",
+  subfolder_name = "pr_gamtetra_location"
+)
+
 ```
