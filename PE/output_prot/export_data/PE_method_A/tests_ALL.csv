@@ -1,0 +1,3 @@
+"test","statistic","df","p_value","effect_size","CI_lower","CI_upper"
+"ANOVA",17.2071038900949,"5, 10",0.000125333044836448,NA,NA,NA
+"Kruskal-Wallis",13.5882352941177,"5",0.0184477898613821,NA,NA,NA

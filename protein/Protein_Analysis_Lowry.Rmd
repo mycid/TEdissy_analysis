@@ -1,16 +1,33 @@
 ---
 title: "Protein Content Analysis using the Lowry Method"
 output: html_document
+params:
+  plot_dir:    "output_prot/plots"
+  data_dir:    "output_prot/export_data"
+  report_dir:  "output_prot/reports"
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
 ```
 
-## Load script
+## Load script and directories
 ```{r}
 # Source script from top-level project folder
 source("../process_plate_run.R")
+#— 1. pull from params (or use defaults)
+plot_dir   <- params$plot_dir   %||% "output_prot/plots"
+data_dir   <- params$data_dir   %||% "output_prot/export_data"
+report_dir <- params$report_dir %||% "output_prot/reports"
+
+#— 2. create all dirs
+walk(
+  c(plot = plot_dir, data = data_dir, reports = report_dir),
+  ~ if (!dir_exists(.x)) dir_create(.x, recurse = TRUE)
+)
+
+#— 3. register plot_dir with knitr
+opts_chunk$set(fig.path = paste0(plot_dir, "/"))
 #
 ```
 
@@ -59,7 +76,7 @@ listprot    <- list(pr1 = pr1, pr2 = pr2)
 listBlanks <- list(blanks1, blanks2)
 #
 # 3. Run the wrapper: it calls tidy_and_correct() on each dataset
-tidy_all(listprot, listBlanks)  # Produces PE1_tidy, PE2_tidy, PE3_tidy, PE4_tidy
+tidy_all(listprot, listBlanks)
 
 ```
 ## STEP 5: JOIN THE DATA WITH ITS SAMPLE WEIGHTS SPREADSHEET
@@ -81,8 +98,9 @@ The `joindf_by_id` function takes two data frames (`df1` and `df2`) and merges t
 
 ```{r join-weights, warning=FALSE}
 # 1. Create output subdirectory
-save_dir <- file.path("output_prot", "export data", "joined_weights_prot")
-dir.create(save_dir, recursive = TRUE, showWarnings = FALSE)
+# 1. Create subdirectory for joined weights inside data_dir
+joined_weights_dir <- file.path(data_dir, "joined_weights_prot")
+if (!dir_exists(joined_weights_dir)) dir_create(joined_weights_dir, recurse = TRUE)
 
 # 2. Build weight and PE data frame lists
 list_weights <- list(
@@ -95,16 +113,21 @@ pr_list <- list(
   pr2 = pr2_tidy
 )
 
-# 3. Loop and join
+# 3. Join + save using joindf_by_id and your output file paths
 mapply(
   function(df1, df2, name) {
+    # Construct full file paths
+    joined_path   <- file.path(joined_weights_dir, paste0(name, "_weights_joined.csv"))
+    unmatched_path <- file.path(joined_weights_dir, paste0(name, "_weights_unmatched.csv"))
+    
+    # Call your existing function
     joindf_by_id(
-      df1          = df1,
-      df2          = df2,
-      output_name  = file.path(save_dir, paste0(name, "_weights_joined.csv")),
-      unmatched_out = file.path(save_dir, paste0(name, "_weights_unmatched.csv")),
-      key_df1      = "Cell_ID",
-      key_df2      = "plate well"
+      df1           = df1,
+      df2           = df2,
+      output_name   = joined_path,
+      unmatched_out = unmatched_path,
+      key_df1       = "Cell_ID",
+      key_df2       = "plate well"
     )
   },
   df1 = pr_list,
@@ -117,7 +140,7 @@ mapply(
 
 ## Create Standard Curve from Lowry Assay
 
-```{r}
+
 ```{r standard-curve, message=FALSE, warning=FALSE}
 
 # Example data: Replace this with your actual data
@@ -130,7 +153,7 @@ model <- lm(X600_cor ~ concentration, data = calibration_prot)
 summary(model)
 
 # Plot
-ggplot(calibration_prot, aes(x = concentration, y = X600_cor)) +
+prot_curve_plot <- ggplot(calibration_prot, aes(x = concentration, y = X600_cor)) +
   geom_point(size = 3) +
   geom_smooth(method = "lm", se = FALSE, color = "blue") +
   labs(
@@ -139,7 +162,8 @@ ggplot(calibration_prot, aes(x = concentration, y = X600_cor)) +
     y = "Absorbance (600 nm)"
   ) +
   annotate(
-    "text", x = max(calibration_prot$concentration) * 0.5, 
+    "text",
+    x = max(calibration_prot$concentration) * 0.5, 
     y = max(calibration_prot$X600_cor) * 0.9,
     label = paste0("y = ", round(coef(model)[2], 4), "x + ", round(coef(model)[1], 4),
                    "\nR² = ", round(summary(model)$r.squared, 4)),
@@ -147,16 +171,148 @@ ggplot(calibration_prot, aes(x = concentration, y = X600_cor)) +
   ) +
   theme_minimal()
 
+# Save using save_object()
+save_object(prot_curve_plot,
+            filename  = "protein_standard_curve",
+            directory = "plots",
+            width     = 6,
+            height    = 5,
+            dpi       = 300)
+print(prot_curve_plot)
 ```
+## Calculate protein concentration with standard curve regression
+```{r}
+# Use the regression model to predict concentration from absorbance
+# Rearranged formula: concentration = (absorbance - intercept) / slope
+intercept <- coef(model)[1]
+slope     <- coef(model)[2]
+
+
+# 1. Find common columns
+common_cols <- intersect(names(pr2_weights_joined), names(pr1_weights_joined))
+
+# Force both weights columns to numeric
+pr1_weights_joined <- pr1_weights_joined %>% mutate(weights = as.numeric(weights))
+pr2_weights_joined <- pr2_weights_joined %>% mutate(weights = as.numeric(weights))
+# Fix the dates
+pr1_weights_joined <- pr1_weights_joined %>%
+  mutate(date = parse_date_time(date, orders = c("ymd", "dmy", "mdy")))
+
+pr2_weights_joined <- pr2_weights_joined %>%
+  mutate(date = parse_date_time(date, orders = c("ymd", "dmy", "mdy")))  # also force to Date with EU format
+# 2. Subset and bind
+
+pr_combined <- bind_rows(pr2_weights_joined[common_cols], pr1_weights_joined[common_cols])
+
+pr_combined$con_mg_per_ml <- (pr_combined$X600 - intercept) / slope
+
+
+
+# ---- Step 4: Convert to total protein in extract (500 µL = 0.5 mL)
+# First, calculate protein in the well (20 µL = 0.02 mL), then scale
+pr_combined$Protein_mg_total <- pr_combined$con_mg_per_ml * 0.5  # total protein in extract
+
+# ---- Step 5: Convert to mg protein per g sample
+pr_combined$Protein_mg_per_g <- (pr_combined$Protein_mg_total / pr_combined$weights) * 1000
+
+## ---- Step 6: Filter out blanks and standards
+pr_combined <- pr_combined[is.finite(pr_combined$Protein_mg_per_g) & !is.na(pr_combined$Protein_mg_per_g), ]
+
+## ---- Create a factor for each run to allow testing for differences between the runs
+pr_combined <- pr_combined %>%
+  mutate(run = as.factor(match(as.Date(date), unique(as.Date(date)))))
+
+## ---- test for differences in the runs
+t.test(Protein_mg_per_g ~ run, data = pr_combined)
+
+# OR Wilcoxon test (if data are not normally distributed)
+wilcox.test(Protein_mg_per_g ~ run, data = pr_combined)
+
+# Visualize differences in box and whisker plot
+ggplot(pr_combined, aes(x = run, y = Protein_mg_per_g, fill = run)) +
+  geom_boxplot(outlier.shape = NA, width = 0.6) +  # boxplot without outliers
+  geom_jitter(width = 0.1, alpha = 0.5, color = "black") +  # add jittered points
+  labs(
+    title = "Protein Content by Run",
+    x = "Run",
+    y = "Protein (mg/g)"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(hjust = 0.5)
+  )
+#
+# Identify outliers with IQR
+# Filter for just runs 1 and 2 (if needed)
+df_runs12 <- pr_combined %>% filter(run %in% c("1", "2"))
+
+# Calculate non-parametric bounds
+iqr_vals <- IQR(df_runs12$Protein_mg_per_g, na.rm = TRUE)
+q1 <- quantile(df_runs12$Protein_mg_per_g, 0.25, na.rm = TRUE)
+q3 <- quantile(df_runs12$Protein_mg_per_g, 0.75, na.rm = TRUE)
+lower_bound <- q1 - 1.5 * iqr_vals
+upper_bound <- q3 + 1.5 * iqr_vals
+
+# Add flag column to full dataframe
+pr_combined <- pr_combined %>%
+  mutate(outlier_flag = ifelse(
+    Protein_mg_per_g < lower_bound | Protein_mg_per_g > upper_bound,
+    "outlier", "normal"
+  ))
+
+pr_combined_clean <- pr_combined %>%
+  filter(outlier_flag == "normal")
+```
+
 ## Analyze Replicates
 ```{r}
-rep_summary <- analyze_replicates(protein_tidy,
-                                  id_col = "ID",
-                                  join_col = "join_id",
-                                  weight_col = "sample weight",
-                                  date_col = "date",
-                                  output_prefix = "protein_analysis",
-                                  choose_best_3 = TRUE)
+analyze_replicates(
+  data          = pr_combined,
+  id_col        = "ID",         # column that uniquely identifies each sample
+  join_col      = "join_id",         # also used for joining, same as id_col here
+  weight_col    = "weights",   # column containing sample weight in grams
+  date_col      = "date",            # column containing sample collection date
+  output_prefix = "pr_rep",   # prefix for output files (will produce all_rep_analy_summary.csv)
+  choose_best_3 = TRUE, # do not filter replicates, use all
+  dir = "output_prot/export_data/"
+)
+#
+# 1. Define the variables to plot
+variables <- c("Protein_mg_g", "X600")
+
+# 1. Define output directory for protein replicate analysis
+protein_plot_dir <- file.path("output_prot", "plots", "replicate_analysis")
+dir.create(protein_plot_dir, recursive = TRUE, showWarnings = FALSE)
+
+# 2. Read protein replicate summary data
+protein_summary <- read.csv("output_prot/export_data/pr_rep_summary.csv")
+
+# 3. Define variable name
+protein_var <- "Protein_mg_per_g"
+se_col_name   <- paste0(protein_var, "_se")
+mean_col_name <- paste0(protein_var, "_mean")
+output_prefix <- file.path(protein_plot_dir, paste0(protein_var, "_replicate_analysis"))
+
+# 4. Generate plot using custom error bar function
+protein_plot <- graph_replicates_custom_error(
+  data          = protein_summary,
+  id_col        = "ID",
+  value_col     = mean_col_name,
+  se_col        = se_col_name,
+  output_prefix = output_prefix
+)
+
+# 5. Save interactive plot using your custom save_object function
+save_object(
+  object     = protein_plot,
+  folder     = protein_plot_dir,
+  file_name  = paste0(protein_var, "_replicate_plot")
+)
+
+# 6. Display plot in HTML report
+protein_plot
+
 ```
 ## Visualize Protein Content Across Replicates
 ```{r}

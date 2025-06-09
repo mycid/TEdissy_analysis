@@ -3,7 +3,7 @@ required_packages <- c(
   "readxl", "dplyr", "tidyr", "tidyverse", "purrr", "zoo",
   "ggplot2", "lubridate", "stringr", "tools", "plotly", 
   "here", "broom", "easystats", "performance", "ggrepel", 
-  "effectsize", "rlang", "boot", "emmeans", "multcompView")
+  "effectsize", "rlang", "boot", "emmeans", "multcompView", "fs", "knitr")
 #
 #
 #
@@ -734,30 +734,43 @@ compare_groups <- function(data,
                            response_var,
                            group_var,
                            facet_var  = NULL,
-                           report_dir = "reports",
-                           plot_dir   = "plots") {
-  if (!requireNamespace("ggpubr", quietly = TRUE)) {
-    install.packages("ggpubr")
-  }
+                           subfolder_name = NULL) {
+  # Load required packages
+  if (!requireNamespace("ggpubr", quietly = TRUE)) install.packages("ggpubr")
   library(ggpubr)
-  # ---- Clean name function
-  clean_name <- function(x) {
-    x %>%
-      str_replace_all("[^a-zA-Z]+", "_") %>%
-      str_remove_all("_$") %>%
-      str_remove_all("^_")
+  library(dplyr)
+  library(stringr)
+  library(tibble)
+  library(multcompView)
+  library(rlang)
+  
+  # Use global params from Rmd for base dirs
+  base_plot_dir   <- plot_dir
+  base_report_dir <- report_dir
+  base_data_dir   <- data_dir
+  
+  # If subfolder name is provided, append it to each base dir
+  if (!is.null(subfolder_name)) {
+    base_plot_dir   <- file.path(base_plot_dir, subfolder_name)
+    base_report_dir <- file.path(base_report_dir, subfolder_name)
+    base_data_dir   <- file.path(base_data_dir, subfolder_name)
+    dir.create(base_plot_dir, recursive = TRUE, showWarnings = FALSE)
+    dir.create(base_report_dir, recursive = TRUE, showWarnings = FALSE)
+    dir.create(base_data_dir, recursive = TRUE, showWarnings = FALSE)
   }
   
-  # ---- Helper: compact letter display from posthoc p-values
+  # Clean name helper
+  clean_name <- function(x) {
+    x %>% str_replace_all("[^a-zA-Z]+", "_") %>% str_remove_all("_$") %>% str_remove_all("^_")
+  }
+  
+  # Compact letter display
   generate_group_letters <- function(posthoc_df) {
     comps <- str_split_fixed(posthoc_df$comparison, "-", 2)
     pvals <- setNames(posthoc_df$`p adj`, paste(comps[,1], comps[,2], sep = "-"))
     cld <- multcompLetters(pvals)
-    tibble::tibble(group = names(cld$Letters), letter = cld$Letters)
+    tibble(group = names(cld$Letters), letter = cld$Letters)
   }
-  
-  if (!dir.exists(report_dir)) dir.create(report_dir, recursive = TRUE)
-  if (!dir.exists(plot_dir))   dir.create(plot_dir, recursive = TRUE)
   
   response_sym <- sym(response_var)
   group_sym    <- sym(group_var)
@@ -780,8 +793,6 @@ compare_groups <- function(data,
   
   clean_response <- clean_name(response_var)
   clean_group    <- clean_name(group_var)
-  sub_report_dir <- file.path(report_dir, paste0(clean_response, "_by_", clean_group))
-  dir.create(sub_report_dir, showWarnings = FALSE, recursive = TRUE)
   
   all_results <- list()
   
@@ -799,7 +810,7 @@ compare_groups <- function(data,
         IQR    = IQR(!!response_sym, na.rm = TRUE),
         .groups = "drop"
       )
-    write.csv(summary_tbl, file = file.path(sub_report_dir, paste0("summary_", facet_name, ".csv")), row.names = FALSE)
+    save_object(summary_tbl, paste0("summary_", facet_name), directory = "data", subdir = subfolder_name, format = "csv")
     
     ng <- nlevels(sub_df[[group_var]])
     test_results <- NULL
@@ -812,7 +823,7 @@ compare_groups <- function(data,
       w_res <- wilcox.test(fmla, data = sub_df)
       d     <- cohens_d(fmla, data = sub_df)
       
-      test_results <- tibble::tibble(
+      test_results <- tibble(
         test        = c("t.test", "wilcox.test"),
         statistic   = c(t_res$statistic, w_res$statistic),
         df          = c(t_res$parameter, NA),
@@ -821,7 +832,6 @@ compare_groups <- function(data,
         CI_lower    = c(t_res$conf.int[1], NA),
         CI_upper    = c(t_res$conf.int[2], NA)
       )
-      
     } else {
       fmla <- as.formula(paste(response_var, "~", group_var))
       aov_res <- aov(fmla, data = sub_df)
@@ -830,7 +840,7 @@ compare_groups <- function(data,
       eta2  <- eta_squared(aov_res)
       r_eta <- rank_eta_squared(fmla, data = sub_df)
       
-      test_results <- tibble::tibble(
+      test_results <- tibble(
         test        = c("ANOVA", "Kruskal-Wallis"),
         statistic   = c(summary(aov_res)[[1]]$`F value`[1], kw_res$statistic),
         df          = c(paste(summary(aov_res)[[1]]$Df[1], summary(aov_res)[[1]]$Df[2], sep = ", "), kw_res$parameter),
@@ -839,14 +849,6 @@ compare_groups <- function(data,
         CI_lower    = NA,
         CI_upper    = NA
       )
-      print("Groups present in this subset:")
-      print(unique(sub_df[[group_var]]))
-      
-      print("ANOVA p-value:")
-      print(summary(aov_res)[[1]]$`Pr(>F)`[1])
-      
-      #print("Tukey results:")
-     # print(TukeyHSD(aov_res))
       
       if (summary(aov_res)[[1]]$`Pr(>F)`[1] < 0.05) {
         tukey <- TukeyHSD(aov_res)
@@ -862,27 +864,18 @@ compare_groups <- function(data,
       }
     }
     
-    write.csv(test_results, file = file.path(sub_report_dir, paste0("tests_", facet_name, ".csv")), row.names = FALSE)
-    if (!is.null(posthoc_results)) write.csv(posthoc_results, file = file.path(sub_report_dir, paste0("posthoc_", facet_name, ".csv")), row.names = FALSE)
-    if (!is.null(group_letters)) write.csv(group_letters, file = file.path(sub_report_dir, paste0("group_letters_", facet_name, ".csv")), row.names = FALSE)
-    if (is.null(group_letters)) {
-      message("No group letters were generated — likely due to too few groups or lack of significant differences.")
-    }
-    # ---- Annotation positions (safe join)
+    save_object(test_results, paste0("tests_", facet_name), directory = "data", subdir = subfolder_name, format = "csv")
+    if (!is.null(posthoc_results)) save_object(posthoc_results, paste0("posthoc_", facet_name), directory = "data", subdir = subfolder_name, format = "csv")
+    if (!is.null(group_letters))    save_object(group_letters, paste0("group_letters_", facet_name), directory = "data", subdir = subfolder_name, format = "csv")
+    
     if (!is.null(group_letters)) {
       label_positions <- sub_df %>%
         mutate(group = as.character(!!group_sym)) %>%
         group_by(group) %>%
         summarise(y_pos = max(!!response_sym, na.rm = TRUE) * 1.05, .groups = "drop")
       
-      group_letters <- group_letters %>%
-        mutate(group = as.character(group))
-      
+      group_letters <- group_letters %>% mutate(group = as.character(group))
       label_df <- left_join(group_letters, label_positions, by = "group")
-      
-      # Debug preview
-      print("Label DF preview:")
-      print(label_df)
     }
     
     sub_df[[group_var]] <- factor(sub_df[[group_var]], levels = levels(df[[group_var]]))
@@ -915,8 +908,14 @@ compare_groups <- function(data,
       )
     }
     
-    plot_filename <- paste0("plot_", clean_response, "_by_", clean_group, "_", facet_name, ".png")
-    ggsave(filename = file.path(plot_dir, plot_filename), plot = p, width = 8, height = 6)
+    save_object(p,
+                filename  = paste0("plot_", clean_response, "_by_", clean_group, "_", facet_name),
+                directory = "plots",
+                subdir    = subfolder_name,
+                width     = 8,
+                height    = 6,
+                dpi       = 300)
+    
     print(p)
     
     all_results[[facet_name]] <- list(
@@ -927,8 +926,6 @@ compare_groups <- function(data,
     )
   }
   
-  message("Reports saved to: ", normalizePath(sub_report_dir))
-  message("Plots saved to: ", normalizePath(plot_dir))
   invisible(all_results)
 }
 
@@ -1277,37 +1274,50 @@ generate_group_letters <- function(posthoc_df) {
 #
 #
 #
-create_lowry_calibration <- function(df,
-                                     sample_col = "sample_id",
-                                     absorbance_col = "absorbance") {
-  library(dplyr)
-  library(ggplot2)
+#
+#
+#
+#
+#
+save_object <- function(object,
+                        filename,
+                        directory = c("plots", "data", "reports"),
+                        format    = NULL,
+                        subdir    = NULL,
+                        ...) {
   
-  # Filter out standard entries and extract concentration
-  df_standards <- df %>%
-    filter(grepl("^ST_", .data[[sample_col]])) %>%
-    mutate(
-      concentration = as.numeric(gsub("ST_", "", .data[[sample_col]])),
-      absorbance = as.numeric(.data[[absorbance_col]])
-    )
+  directory <- match.arg(directory)
+  base_dir  <- switch(directory,
+                      plots   = plot_dir,
+                      data    = data_dir,
+                      reports = report_dir)
   
-  # Fit linear model
-  model <- lm(absorbance ~ concentration, data = df_standards)
+  # Build full target directory (with optional subdir)
+  target_dir <- if (!is.null(subdir)) file.path(base_dir, subdir) else base_dir
+  if (!dir.exists(target_dir)) dir.create(target_dir, recursive = TRUE)
   
-  # Plot
-  p <- ggplot(df_standards, aes(x = concentration, y = absorbance)) +
-    geom_point() +
-    geom_smooth(method = "lm", se = FALSE, color = "blue") +
-    labs(
-      title = "Lowry Calibration Curve",
-      x = "BSA Concentration (mg/mL)",
-      y = "Absorbance"
-    ) +
-    theme_minimal()
+  # Determine file extension
+  if (is.null(format)) {
+    format <- if (inherits(object, "ggplot")) "png"
+    else if (is.data.frame(object)) "csv"
+    else "rds"
+  }
   
-  list(model = model, plot = p)
+  out_path <- file.path(target_dir, paste0(filename, ".", format))
+  
+  # Save the object
+  if (inherits(object, "ggplot") && format %in% c("png", "pdf", "svg", "jpeg")) {
+    ggsave(filename = out_path, plot = object, ...)
+  } else if (is.data.frame(object) && format == "csv") {
+    write.csv(object, out_path, row.names = FALSE, ...)
+  } else if (format == "rds") {
+    saveRDS(object, out_path, ...)
+  } else {
+    stop("Unsupported object type or format.")
+  }
+  
+  invisible(out_path)
 }
-
 
 
 

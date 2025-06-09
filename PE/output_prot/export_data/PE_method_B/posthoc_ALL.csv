@@ -1,0 +1,16 @@
+"comparison_1","comparison_2","p_value"
+"Lima Market Oven Dry","Lima Market Freeze Dry",0.3
+"Ilo Freeze Dry","Lima Market Freeze Dry",1
+"Ilo oven dry","Lima Market Freeze Dry",0.681818181818182
+"Ilo Fresh","Lima Market Freeze Dry",0.3
+"Lima Market Fresh","Lima Market Freeze Dry",0.681818181818182
+"Ilo Freeze Dry","Lima Market Oven Dry",0.3
+"Ilo oven dry","Lima Market Oven Dry",1
+"Ilo Fresh","Lima Market Oven Dry",0.3
+"Lima Market Fresh","Lima Market Oven Dry",0.681818181818182
+"Ilo oven dry","Ilo Freeze Dry",0.681818181818182
+"Ilo Fresh","Ilo Freeze Dry",0.3
+"Lima Market Fresh","Ilo Freeze Dry",0.681818181818182
+"Ilo Fresh","Ilo oven dry",0.681818181818182
+"Lima Market Fresh","Ilo oven dry",1
+"Lima Market Fresh","Ilo Fresh",1
