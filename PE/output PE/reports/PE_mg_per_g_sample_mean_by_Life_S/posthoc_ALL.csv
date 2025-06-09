@@ -1,0 +1,11 @@
+"comparison_1","comparison_2","p_value"
+"Carp","Tetra",0.839560439560439
+"Gam","Tetra",0.161172161172161
+"Gam/Tetra","Tetra",0.347958214624881
+"Unknown","Tetra",0.25
+"Gam","Carp",0.0310657128428508
+"Gam/Tetra","Carp",0.318336761047444
+"Unknown","Carp",0.161172161172161
+"Gam/Tetra","Gam",0.318336761047444
+"Unknown","Gam",0.347958214624881
+"Unknown","Gam/Tetra",0.259803921568627

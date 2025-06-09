@@ -320,7 +320,7 @@ The `joindf_by_id` function takes two data frames (`df1` and `df2`) and merges t
 
 ```{r join-weights, warning=FALSE}
 # 1. Create output subdirectory
-save_dir <- file.path("output_PE", "export data", "joined_weights_PE")
+save_dir <- file.path("output PE", "export data", "joined_weights_PE")
 dir.create(save_dir, recursive = TRUE, showWarnings = FALSE)
 
 # 2. Build weight and PE data frame lists
@@ -682,20 +682,20 @@ combined_export_path <- file.path("output PE", "export data", "combined_df.csv")
 write.csv(combined_df, combined_export_path, row.names = FALSE)
 ```
 
-
 A new level "run 3 fresh" has been added
+
 ## Fluoresence phycoerythrin estimation fitting
 ```{r}
 # ── Subset to run 2, drop missing PE/Xred, and filter PE ≥ 10 µg/g (i.e. ≥ 0.01 mg/g) ─────
-df_run2 <- df_combined %>%
+combined_df_run2 <- combined_df %>%
   filter(run == "2") %>%                                  # keep only run 2
   drop_na(PE_mg_per_g_sample, Xred) %>%                   # drop any NA in PE or Xred
   filter(PE_mg_per_g_sample >= 0.01)                       # remove PE < 0.01 mg/g
 ## STEP 11: REGRESSION MODELS BY RUN
 # ── Fit an initial OLS (PE_mg_per_g_sample ~ Xred) and flag statistical outliers ─────────
-model_initial_run2 <- lm(PE_mg_per_g_sample ~ Xred, data = df_run2)
+model_initial_run2 <- lm(PE_mg_per_g_sample ~ Xred, data = combined_df_run2)
 
-df_run2 <- df_run2 %>%
+combined_df_run2 <- combined_df_run2 %>%
   mutate(
     resid_initial = residuals(model_initial_run2),
     std_resid      = rstandard(model_initial_run2),
@@ -703,7 +703,7 @@ df_run2 <- df_run2 %>%
   )
 
 # How many points and how many outliers?
-df_run2 %>%
+combined_df_run2 %>%
   summarize(
     total_points = n(),
     n_outliers   = sum(is_outlier),
@@ -711,8 +711,8 @@ df_run2 %>%
   ) %>%
   print()
 
-# (Optional) Visualize initial model with outliers highlighted
-ggplot(df_run2, aes(x = Xred, y = PE_mg_per_g_sample, color = is_outlier)) +
+#  Visualize initial model with outliers highlighted
+ggplot(combined_df_run2, aes(x = Xred, y = PE_mg_per_g_sample, color = is_outlier)) +
   geom_point(size = 2, alpha = 0.7) +
   scale_color_manual(values = c("FALSE" = "steelblue", "TRUE" = "firebrick")) +
   geom_abline(
@@ -726,18 +726,19 @@ ggplot(df_run2, aes(x = Xred, y = PE_mg_per_g_sample, color = is_outlier)) +
     y        = "PE (mg per g sample)"
   ) +
   theme_minimal()
+
 # ── Remove flagged outliers and refit the “clean” calibration model ───────────────────────
-df_run2_clean <- df_run2 %>%
+combined_df_run2_clean <- combined_df_run2 %>%
   filter(!is_outlier)
 
-model_clean_run2 <- lm(PE_mg_per_g_sample ~ Xred, data = df_run2_clean)
+model_clean_run2 <- lm(PE_mg_per_g_sample ~ Xred, data = combined_df_run2_clean)
 
 # Summarize the clean model
 tidy(model_clean_run2) %>% print()
 summary(model_clean_run2)$r.squared %>% print()
 
 # Visualize the final fit on run 2 (outliers removed)
-ggplot(df_run2_clean, aes(x = Xred, y = PE_mg_per_g_sample)) +
+ggplot(combined_df_run2_clean, aes(x = Xred, y = PE_mg_per_g_sample)) +
   geom_point(color = "steelblue", size = 2, alpha = 0.7) +
   geom_smooth(method = "lm", color = "darkgreen", se = FALSE) +
   labs(
@@ -746,6 +747,7 @@ ggplot(df_run2_clean, aes(x = Xred, y = PE_mg_per_g_sample)) +
     y     = "PE (mg per g sample)"
   ) +
   theme_minimal()
+
 # ── Define a function to add fluorescence‐predicted PE to any dataframe ──────────────────
 
 # Extract coefficients from the clean run‐2 model
@@ -761,25 +763,12 @@ coef_slope     <- coef(model_clean_run2)["Xred"]
 #' @param fluor_col String: name of the column in df containing the fluorescence (Xred) values.
 #' @param new_col   String: desired name for the new predicted PE column (default = "PE_predicted_mg_per_g").
 #' @return          A new data frame with an additional column `new_col`.
-calc_PE_from_Xred <- function(df, fluor_col = "Xred", new_col = "PE_predicted_mg_per_g") {
-  intercept <- coef_intercept
-  slope     <- coef_slope
 
-  # Ensure the fluorescence column exists
-  if (!fluor_col %in% names(df)) {
-    stop(glue::glue("Column '{fluor_col}' not found in the input data frame."))
-  }
-
-  # Compute predicted PE and add as a new column
-  df[[new_col]] <- intercept + slope * df[[fluor_col]]
-  return(df)
-}
-
-# Example: apply to the master dataset
-df_combined <- calc_PE_from_Xred(df_combined, fluor_col = "Xred", new_col = "PE_pred_run2_mg_per_g")
+# apply to the master dataset
+combined_df <- calc_PE_from_Xred(combined_df, fluor_col = "Xred", new_col = "PE_pred_run2_mg_per_g")
 
 # View the first few rows to confirm
-df_combined %>%
+combined_df %>%
   select(join_id, run, Xred, PE_mg_per_g_sample, PE_pred_run2_mg_per_g) %>%
   head(10) %>%
   print()
@@ -797,35 +786,103 @@ df_combined %>%
 #' @param pred_col  String: name of the new predicted PE column.
 #' @param se_col    String: name of the new standard‐error column.
 #' @return          A new data frame with additional columns `pred_col` and `se_col`.
-add_PE_with_se <- function(df, fluor_col = "Xred",
-                            pred_col = "PE_pred_run2_mg_per_g",
-                            se_col   = "PE_se_run2") {
-  # Build a newdata frame for prediction
-  newdata <- df %>%
-    transmute(!!sym(fluor_col) := .data[[fluor_col]])
-
-  # Use predict.lm with se.fit = TRUE
-  preds <- predict(model_clean_run2, newdata = newdata, se.fit = TRUE)
-
-  # Attach predicted values and SE to the original df
-  df[[pred_col]] <- preds$fit
-  df[[se_col]]   <- preds$se.fit
-  return(df)
-}
 
 # Example: apply to the master dataset
-df_combined <- add_PE_with_se(df_combined,
+combined_df <- add_PE_with_se(combined_df,
                               fluor_col = "Xred",
                               pred_col  = "PE_pred_run2_mg_per_g",
                               se_col    = "PE_se_run2")
 
 # View the first few rows to confirm
-df_combined %>%
+combined_df %>%
   select(join_id, run, Xred, PE_mg_per_g_sample,
          PE_pred_run2_mg_per_g, PE_se_run2) %>%
   head(10) %>%
   print()
 
+```
+
+
+```{r compare-measured-vs-predicted, message=FALSE, warning=FALSE}
+# Compute differences between measured and predicted PE
+de <- "output PE/plots"
+if (!dir.exists(de)) dir.create(de, recursive = TRUE)
+df_compare <- combined_df %>%
+  filter(!is.na(PE_mg_per_g_sample), !is.na(PE_pred_run2_mg_per_g)) %>%
+  mutate(
+    diff     = PE_mg_per_g_sample - PE_pred_run2_mg_per_g,
+    diff_abs = abs(diff),
+    mean_PE  = (PE_mg_per_g_sample + PE_pred_run2_mg_per_g) / 2
+  )
+
+# 1) Scatter: Measured vs Predicted PE
+p1 <- ggplot(df_compare, aes(x = PE_pred_run2_mg_per_g, y = PE_mg_per_g_sample, color = run)) +
+  geom_point(size = 2) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  geom_text_repel(aes(label = join_id), size = 3, max.overlaps = 20) +
+  labs(
+    title = "Measured vs. Predicted PE by Run",
+    x = "Predicted PE (mg/g)",
+    y = "Measured PE (mg/g)",
+    color = "Run"
+  ) +
+  theme_minimal()
+print(p1)
+# Save plot
+ggsave(filename = file.path("output PE/plots", "measured_vs_predicted_PE.png"), plot = p1, width = 6, height = 4)
+
+# 2) Residuals vs Predicted
+p2 <- ggplot(df_compare, aes(x = PE_pred_run2_mg_per_g, y = diff)) +
+  geom_point( size = 2) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(
+    title = "Residuals vs. Predicted",
+    x = "Predicted PE (mg/g)",
+    y = "Measured – Predicted (mg/g)",
+    color = "Run"
+  ) +
+  theme_minimal()
+
+print(p2)
+# Save plot
+ggsave(filename = file.path(de, "residuals_vs_predicted_PE.png"), plot = p2, width = 6, height = 4)
+
+# 3) Bland–Altman plot
+p3 <- ggplot(df_compare, aes(x = mean_PE, y = diff)) +
+  geom_point(color = "darkgreen", size = 2) +
+  geom_hline(yintercept = mean(df_compare$diff), color = "blue") +
+  geom_hline(yintercept = mean(df_compare$diff) + 1.96 * sd(df_compare$diff),
+             linetype = "dashed", color = "grey50") +
+  geom_hline(yintercept = mean(df_compare$diff) - 1.96 * sd(df_compare$diff),
+             linetype = "dashed", color = "grey50") +
+  labs(
+    title = "Bland–Altman Plot",
+    x = "Mean of Measured & Predicted PE (mg/g)",
+    y = "Difference (Measured – Predicted)"
+  ) +
+  theme_minimal()
+print(p3)
+# Save plot
+ggsave(filename = file.path(de, "bland_altman_PE.png"), plot = p3, width = 6, height = 4)
+```
+
+```{r top20-differences}
+# Extract and save top 20 samples with largest absolute differences
+top20_diff <- df_compare %>%
+  arrange(desc(diff_abs)) %>%
+  slice(1:20) %>%
+  select(join_id, run, PE_mg_per_g_sample, PE_pred_run2_mg_per_g, diff, diff_abs)
+
+# Print top 20 to console
+print(top20_diff)
+
+# Create export directory for data if it doesn't exist
+export_dir <- "output PE/export data"
+if (!dir.exists(export_dir)) dir.create(export_dir, recursive = TRUE)
+
+
+# Save to CSV in the export directory
+write_csv(top20_diff, file.path(export_dir, "top20_PE_differences.csv"))
 ```
 
 
@@ -875,13 +932,20 @@ dir.create(reg_dir, recursive = TRUE, showWarnings = FALSE)
 # 3. Loop over each unique run identifier
 for (r in unique(as.character(combined_df$run))) {
   # 3a. Subset to only this run
-  df_sub <- combined_df %>% filter(run == r)
-  
-  # 3b. Skip if too few data points
-  if (nrow(df_sub) < 4) {
-    warning(paste("Skipping run", r, "- not enough data (n =", nrow(df_sub), ")"))
-    next
-  }
+  # 3a. Subset to only this run
+df_sub <- combined_df %>% filter(run == r)
+
+# 3a.1 Clean the data
+df_sub <- df_sub %>%
+  filter(!is.na(PE_scaled), !is.na(Xred), 
+         is.finite(PE_scaled), is.finite(Xred), 
+         PE_scaled > -0.001)
+
+# 3b. Skip if too few data points
+if (nrow(df_sub) < 4) {
+  warning(paste("Skipping run", r, "- not enough data (n =", nrow(df_sub), ")"))
+  next
+}
   
   # 3c. Fit models
   model_linear <- lm(Xred ~ PE_scaled, data = df_sub)
@@ -929,9 +993,9 @@ for (r in unique(as.character(combined_df$run))) {
   # 3g. Show plot in knitted HTML
   print(p)
 }
-
-
 ```
+
+
 
 ## STEP 12: ANALYZE TECHNICAL REPLICATES
 
@@ -960,7 +1024,8 @@ analyze_replicates(
   weight_col    = "sample weight",   # column containing sample weight in grams
   date_col      = "date",            # column containing sample collection date
   output_prefix = "all_rep_analy",   # prefix for output files (will produce all_rep_analy_summary.csv)
-  choose_best_3 = FALSE           # do not filter replicates, use all
+  choose_best_3 = FALSE, # do not filter replicates, use all
+  dir = "output PE/export data/"
 )
 
 # 2. Analyze replicates with enhanced (best-3) selection by CV
@@ -971,7 +1036,9 @@ analyze_replicates(
   weight_col    = "sample weight",   # sample weight column (grams)
   date_col      = "date",            # collection date column
   output_prefix = "E_rep_analy",     # prefix for output files (will produce E_rep_analy_summary.csv)
-  choose_best_3 = TRUE               # select the best 3 replicates (lowest CV) per sample
+  choose_best_3 = TRUE,
+  dir = "output PE/export data/"
+  # select the best 3 replicates (lowest CV) per sample
 )
 # 3. Generate histograms with error bars for key variables
 ## SAVE HISTOGRAMS WITH ERROR BARS AS PNGS
@@ -992,11 +1059,11 @@ analyze_replicates(
 variables <- c("PE_mg_per_g_sample", "Xred", "X564")
 
 # 2. Define shared output directory
-rep_plot_dir <- file.path("PE", "output_PE", "plots", "replicate_analysis")
+rep_plot_dir <- file.path("output PE", "plots", "replicate_analysis")
 dir.create(rep_plot_dir, recursive = TRUE, showWarnings = FALSE)
 
 # 3. Read summary data
-E_rep_analy_summary <- read.csv("E_rep_analy_summary.csv")
+E_rep_analy_summary <- read.csv("output PE/export data/E_rep_analy_summary.csv")
 
 # 4. Initialize list for interactive plotly plots
 interactive_plots <- list()
@@ -1024,6 +1091,7 @@ htmltools::tagList(interactive_plots)
 
 
 ```
+
 ### Check the effect of Lorenas data
 ```{r}
 Combined_df_before <- combined_df[combined_df$run != "4",]
@@ -1034,9 +1102,10 @@ analyze_replicates(
   weight_col    = "sample weight",   # sample weight column (grams)
   date_col      = "date",            # collection date column
   output_prefix = "E_rep_analy_before",
-  choose_best_3 = TRUE 
+  choose_best_3 = TRUE,
+  dir = "output PE/export data/"
   )
-Before <- read.csv("E_rep_analy_before_summary.csv")
+Before <- read.csv("output PE/export data/E_rep_analy_before_summary.csv")
 
 E_rep_analy_summary <- E_rep_analy_summary[-1,]
 
@@ -1050,8 +1119,8 @@ paste("sample se for replicates change by:", se_change)
 Check effects of enhancement algorithm
 
 ```{r}
-PErep_enhanced <- read_csv("E_rep_analy_summary.csv") #retrieve analized replicates from enhanced CV 
-PErep_all <- read_csv("all_rep_analy_summary.csv") #retrieve analized replicates without enhancement 
+PErep_enhanced <- read_csv("output PE/export data/E_rep_analy_summary.csv") #retrieve analized replicates from enhanced CV 
+PErep_all <- read_csv("output PE/export data/all_rep_analy_summary.csv") #retrieve analized replicates without enhancement 
 #Note, this is a product of analyze_replicates using enhanced replicate selection.
 SE_change <- PErep_enhanced$PE_mg_per_g_sample_max_dev_pct -PErep_all$PE_mg_per_g_sample_max_dev_pct
 print(SE_change)
@@ -1080,7 +1149,7 @@ paste("average improvement by max deviation as a percent of the mean:", abs(mean
 # 1. Merge enhanced replicate summary with metadata by column "ID"
 #    This will save "PErep_final.csv" and assign the merged data frame to `PErep_final`.
 # 1. Define export folder and create it if needed
-final_export_dir <- file.path("PE", "output_PE", "export data", "PErep_joined")
+final_export_dir <- file.path("output PE", "export data", "Samples Analysis Final")
 dir.create(final_export_dir, recursive = TRUE, showWarnings = FALSE)
 
 # 2. Join PErep_enhanced with Sample data
@@ -1097,7 +1166,7 @@ joindf_by_id(
 PErep_final <- readr::read_csv(file.path(final_export_dir, "PErep_final.csv"))
 
 # 4. Define output directory for replicate analysis plots
-rep_plot_dir <- file.path("PE", "output_PE", "plots", "replicate_analysis")
+rep_plot_dir <- file.path("output PE", "plots", "replicate_analysis")
 dir.create(rep_plot_dir, recursive = TRUE, showWarnings = FALSE)
 
 # 5. Generate histogram with error bars for PE_mg_per_g_sample_mean
@@ -1109,217 +1178,111 @@ graph_replicates_custom_error(
   output_prefix = file.path(rep_plot_dir, "E_rep_analy")
 )
 
+PE_location <- PErep_final %>%
+  filter(!Location %in% c("Lima Market Freeze Dry", "Ilo Freeze Dry", "Ilo oven dry", "Ilo Fresh", "Lima Market Fresh"))
+
+PE_location_cham <- PErep_final %>%
+  filter(!variety %in% c("F.Glom"))
 # 6. Run group comparisons and print outputs
+
+###################################################Location
 compare_groups(
-  data         = PErep_final,
-  response_var = "PE_mg_per_g_sample_mean",
-  group_var    = "Location"
-)
-
-compare_groups(
-  data         = PErep_final,
-  response_var = "Xred_mean",
-  group_var    = "Location"
-)
-
-compare_groups(
-  data         = PErep_final,
-  response_var = "PE_mg_per_g_sample_mean",
-  group_var    = "variety"
-)
-
-compare_groups(
-  data         = PErep_final,
-  response_var = "PE_mg_per_g_sample_mean",
-  group_var    = "Life_S"
-)
-
-```
-
-After the join, PErep_final includes both replicate‐analysis summary columns (means, SE, CV, etc.) and metadata columns (Location, variety, Life_S).
-
-The histogram with error bars (graph_replicates_custom_error) shows the distribution of PE_mg_per_g_sample_mean across all samples, with standard error bars.
-
-The four boxplots (compare_groups) reveal:
-
-PE_mg_per_g_sample_mean differs significantly across Location (e.g., Location A \> Location B \> Location C).
-
-Xred_mean also varies by Location.
-
-PE_mg_per_g_sample_mean shows significant differences among varieties (e.g., Variety X \> Variety Y).
-
-PE_mg_per_g_sample_mean differs by life stage (e.g., Juvenile vs. Mature).
-
-------------------------------------------------------------------------
-
-## STEP 14: SUBSET DATA FOR SPECIFIC VARIETY OR LOCATION AND RUN GROUP COMPARISONS
-
--   We want to compare PE and fluorescence metrics for either:\
-
-1.  **All locations but a single variety**, or\
-2.  **All varieties but a single location**.\
-
--   Below are two sub‐sections demonstrating these scenarios.
-
-### 14A: Compare Across All Locations for a Single Variety
-
--   Subset `PErep_final` to only rows where `variety == "Red"` (replace `"Red"` with your actual variety).\
--   Then run `compare_groups()` to compare:
-    -   **PE_mg_per_g_sample_mean** by **Location**\
-    -   **Xred_mean** by **Location**
-
-### 14B: Compare Across All Varieties for a Single Location
-Subset PErep_final to only rows where Location == "LocationA" (replace "LocationA" with your actual location).
-
-Then run compare_groups() to compare:
-
-PE_mg_per_g_sample_mean by variety
-
-Xred_mean by variety
-```{r subset-variety, warning=FALSE}
-# 📁 1. Create export folder for comparison results
-comparison_dir <- file.path("PE", "output_PE", "export data", "PErep_comparisons")
-dir.create(comparison_dir, recursive = TRUE, showWarnings = FALSE)
-
-# 📊 2. Subset data: gametophyte/tetrasporophyte life stages
-df_gamtetra <- PErep_final %>%
-  filter(Life_S %in% c("Gam/Tetra", "Gam", "Tetra"))
-
-# 📈 3. Compare PE across locations for gametophyte/tetrasporophyte
-res_gamtetra_PE <- compare_groups(
-  data         = df_gamtetra,
-  response_var = "PE_mg_per_g_sample_mean",
-  group_var    = "Location"
-)
-cat("### PE comparison by Location (Gam/Tetra)\n")
-print(res_gamtetra_PE)
-write.csv(res_gamtetra_PE, file = file.path(comparison_dir, "PE_by_location_gamtetra.csv"), row.names = FALSE)
-
-# 📈 4. Compare Xred across locations for gametophyte/tetrasporophyte
-res_gamtetra_Xred <- compare_groups(
-  data         = df_gamtetra,
-  response_var = "Xred_mean",
-  group_var    = "Location"
-)
-cat("### Xred comparison by Location (Gam/Tetra)\n")
-print(res_gamtetra_Xred)
-write.csv(res_gamtetra_Xred, file = file.path(comparison_dir, "Xred_by_location_gamtetra.csv"), row.names = FALSE)
-
-# 📊 5. Subset data: carpogonium life stage
-df_carp <- PErep_final %>%
-  filter(Life_S == "Carp")
-
-# 📈 6. Compare PE across locations for carpogonium
-res_carp_PE <- compare_groups(
-  data         = df_carp,
-  response_var = "PE_mg_per_g_sample_mean",
-  group_var    = "Location"
-)
-cat("### PE comparison by Location (Carpogonium)\n")
-print(res_carp_PE)
-write.csv(res_carp_PE, file = file.path(comparison_dir, "PE_by_location_carp.csv"), row.names = FALSE)
-
-# 📊 7. Subset data: C. chamissoi variety
-df_cham <- PErep_final %>%
-  filter(variety == "C.Cham")
-
-# 📈 8. Compare PE across locations for C.Cham
-res_cham_PE <- compare_groups(
-  data         = df_cham,
-  response_var = "PE_mg_per_g_sample_mean",
-  group_var    = "Location"
-)
-cat("### PE comparison by Location (C.Cham variety)\n")
-print(res_cham_PE)
-write.csv(res_cham_PE, file = file.path(comparison_dir, "PE_by_location_cham.csv"), row.names = FALSE)
-
-# 📊 9. Subset data: F. glomerata variety
-df_glom <- PErep_final %>%
-  filter(variety == "F. Glom")
-
-# 📈 10. Compare PE across locations for F.Glom
-res_glom_PE <- compare_groups(
-  data         = df_glom,
-  response_var = "PE_mg_per_g_sample_mean",
-  group_var    = "Location"
-)
-cat("### PE comparison by Location (F. Glom variety)\n")
-print(res_glom_PE)
-write.csv(res_glom_PE, file = file.path(comparison_dir, "PE_by_location_glom.csv"), row.names = FALSE)
-
-# 📊 11. Subset by selected locations only
-df_selected_sites <- PErep_final %>%
-  filter(Location %in% c("Mendieta", "7H", "Caro Caido"))
-
-# 📈 12. Compare PE across selected sites
-res_sites_PE <- compare_groups(
-  data         = df_selected_sites,
-  response_var = "PE_mg_per_g_sample_mean",
-  group_var    = "Location"
-)
-cat("### PE comparison across Mendieta, 7H, and Caro Caido\n")
-print(res_sites_PE)
-write.csv(res_sites_PE, file = file.path(comparison_dir, "PE_by_location_selected_sites.csv"), row.names = FALSE)
-```
-##Step 14: Bootsrapped comparison
-## Example: Bootstrapped Group Comparisons with `compare_groups_bootstrap`
-
-In this chunk, we:
-
-1. **Load** or attach your data (e.g. a CSV or whichever source you use).  
-2. **Call** `compare_groups_bootstrap()` to compute 95% bootstrapped confidence intervals and effect sizes (mean differences and Cohen’s _d_) for a response variable across treatment groups.  
-3. **Inspect** the returned summary tables (bootstrapped means + CIs, pairwise effect sizes + CIs).  
-4. **Plot** the two ggplots (group‐means with CIs, and pairwise effect‐size estimates with CIs).  
-5. Optionally, **arrange** both plots side‐by‐side using `patchwork`.
-
-```{r}
-# 1. Load your data into R. 
-#    (Replace the path or method below with however you import your dataset.)
-#    This should produce a data.frame named `PErep_final` with at least:
-#      • A numeric column "PE_mg_per_g_sample_mean" 
-#      • A factor/character column "Location"
-PErep_final <- read.csv("path/to/your/PErep_final.csv")
-
-# 2. Call compare_groups_bootstrap() to run bootstrapped analyses.
-#    - data:       the data.frame (PErep_final)
-#    - response_var: the numeric response column (PE_mg_per_g_sample_mean)
-#    - group_var:    the factor/“treatment” column (Location)
-#    - facet_var = NULL: means no faceting; run as a single overall analysis
-#    - n_boot = 5000:       number of bootstrap resamples (adjust if speed is an issue)
-#    - conf_level = 0.95:   95% confidence intervals
-res <- compare_groups_bootstrap(
-  data         = PErep_final,
+  data         = PE_location_cham,
   response_var = "PE_mg_per_g_sample_mean",
   group_var    = "Location",
-  facet_var    = NULL,       
-  n_boot       = 5000,       
-  conf_level   = 0.95        
+  report_dir = "output PE/reports",
+  plot_dir   = "output PE/plots"
 )
 
-# 3. Inspect the structure of the returned summaries:
-#    - `res$summary` is a named list. If no facet_var was used, it will have a single element "ALL".
-names(res$summary)              
-#    • Should print: "ALL"  
+compare_groups(
+  data         = PE_location_cham,
+  response_var = "PE_pred_run2_mg_per_g_mean",
+  group_var    = "Location",
+  report_dir = "output PE/reports",
+  plot_dir   = "output PE/plots"
+)
 
-# 3a. View bootstrapped means and CIs for each group:
-res$summary$ALL$group_bootstrap_means
-#    • A tibble with columns: group, mean_est, ci_lower, ci_upper, and n (sample size).
+################################################Life_S
+compare_groups(
+  data         = PE_location_cham,
+  response_var = "PE_mg_per_g_sample_mean",
+  group_var    = "Life_S",
+  report_dir = "output PE/reports",
+  plot_dir   = "output PE/plots"
+)
 
-# 3b. View pairwise effect‐size estimates (mean_diff, cohens_d + their CIs) for every pair of groups:
-res$summary$ALL$pairwise_effectsizes
-#    • A tibble with: group1, group2, mean_diff, mean_diff_lower, mean_diff_upper,
-#                     cohens_d, cohens_d_lower, cohens_d_upper.
+compare_groups(
+  data         = PE_location_cham,
+  response_var = "PE_pred_run2_mg_per_g_mean",
+  group_var    = "Life_S",
+  report_dir = "output PE/reports",
+  plot_dir   = "output PE/plots"
+)
 
-# 4. Plotting:
-#    - `res$plots$ALL$boot_means_plot` shows each group’s bootstrapped mean ± 95% CI.
-#    - `res$plots$ALL$pairwise_effects_plot` shows pairwise estimates (mean_diff & Cohen’s d) ± 95% CI.
-res$plots$ALL$boot_means_plot
-res$plots$ALL$pairwise_effects_plot
+###########################################Variety
+PE_paracas_marcona <- PErep_final %>%
+  filter(Location %in% c("Mendieta", "7H", "Caro Caido"))
 
-# 5. (Optional) Arrange the two plots side‐by‐side using patchwork:
-#    • install.packages("patchwork") if you don’t already have it.
-#    • Then:
-library(patchwork)
-res$plots$ALL$boot_means_plot + res$plots$ALL$pairwise_effects_plot
+compare_groups(
+  data         = PE_paracas_marcona,
+  response_var = "PE_mg_per_g_sample_mean",
+  group_var    = "variety",
+  report_dir = "output PE/reports",
+  plot_dir   = "output PE/plots"
+)
+
+compare_groups(
+  data         = PE_location_cham,
+  response_var = "PE_pred_run2_mg_per_g_mean",
+  group_var    = "variety",
+  report_dir = "output PE/reports",
+  plot_dir   = "output PE/plots"
+)
+
+#################################Preperation method
+
+PE_methods <- PErep_final %>%
+  filter(Location %in% c("Lima Market Freeze Dry", "Ilo Freeze Dry", "Ilo oven dry", "Ilo Fresh", "Lima Market Fresh", "Lima Market Oven Dry"))
+
+compare_groups(
+  data         = PE_methods,
+  response_var = "PE_mg_per_g_sample_mean",
+  group_var    = "Location",
+  report_dir = "output PE/reports",
+  plot_dir   = "output PE/plots"
+)
+
+compare_groups(
+  data         = PE_methods,
+  response_var = "PE_pred_run2_mg_per_g_mean",
+  group_var    = "Location",
+  report_dir = "output PE/reports",
+  plot_dir   = "output PE/plots"
+)
+
+#################################Gam Cham
+
+PE_gamtetra <- PE_location %>%
+  filter(Life_S %in% c("Gam/Tetra", "Gam", "Tetra"))
+
+compare_groups(
+  data         = PE_gamtetra,
+  response_var = "PE_mg_per_g_sample_mean",
+  group_var    = "Location",
+  report_dir = "output PE/reports",
+  plot_dir   = "output PE/plots"
+)
+
+compare_groups(
+  data         = PE_gamtetra,
+  response_var = "PE_pred_run2_mg_per_g_mean",
+  group_var    = "Location",
+  report_dir = "output PE/reports",
+  plot_dir   = "output PE/plots"
+)
 ```
+
+
+
+
 

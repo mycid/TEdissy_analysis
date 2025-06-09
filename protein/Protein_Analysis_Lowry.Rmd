@@ -6,57 +6,147 @@ output: html_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
 ```
-## Load Required Libraries and Functions
+
+## Load script
 ```{r}
-required_packages <- c(
-  'readxl', 'dplyr', 'tidyr', 'ggplot2', 'broom', 'purrr',
-  'stringr', 'zoo', 'ggpubr', 'plotly', 'here'
+# Source script from top-level project folder
+source("../process_plate_run.R")
+#
+```
+
+## Load input data
+```{r load-excel-files, warning=FALSE}
+# 1. Define the folder containing all Excel inputs
+input_folder <- "Input_prot"
+
+# 2. Find all .xlsx files (full paths), excluding temp files that start with "~$"
+excel_files <- list.files(
+  path = input_folder, 
+  pattern = "\\.xlsx?$", 
+  full.names = TRUE
 )
-for(pkg in required_packages) {
-  if (!requireNamespace(pkg, quietly = TRUE)) install.packages(pkg)
-  library(pkg, character.only = TRUE)
+excel_files <- excel_files[!grepl("^~\\$", basename(excel_files))]
+
+# 3. Loop over each file
+for (file in excel_files) {
+  # 3a. Create a clean object name (strip out folder & extension)
+  name <- tools::file_path_sans_ext(basename(file))
+  
+  # 3b. Determine which sheet to read (second if possible, otherwise first)
+  sheet_names   <- excel_sheets(file)
+  sheet_to_read <- if (length(sheet_names) >= 2) sheet_names[2] else sheet_names[1]
+  
+  # 3c. Read the chosen sheet, suppressing verbose messages
+  data <- suppressMessages(read_excel(file, sheet = sheet_to_read))
+  
+  # 3d. Assign the data.frame to the global environment under "name"
+  assign(name, data, envir = .GlobalEnv)
+  
+  # 3e. Print a message to confirm successful load
+  message("Loaded: ", name, " (sheet = '", sheet_to_read, "')")
 }
-# Source your script with helper functions
-source('scripts/process_plate_run.R')
 ```
-## Load and Tidy Protein Data
-```{r}
-# Load data (this function will take the second sheet if available)
-load_excel_files("data")  # Adjust folder path as needed
 
-# Tidy and correct using blank wells A01 and B01
-protein_tidy <- tidy_and_correct(PROTEINA_9_5_25, blanks = c("A01", "B01"))
+### Tidy photospectrometer input data into dataframes and correct blanks
+```{r tidy-processing}
+# 1. Define which wells were used as blanks in each run
+blanks1 <- c("A01", "A02", "A03")
+blanks2 <- c("H11", "H12")
+#
+# 2. Build named lists of raw datasets and their corresponding blank vectors
+listprot    <- list(pr1 = pr1, pr2 = pr2)
+#
+listBlanks <- list(blanks1, blanks2)
+#
+# 3. Run the wrapper: it calls tidy_and_correct() on each dataset
+tidy_all(listprot, listBlanks)  # Produces PE1_tidy, PE2_tidy, PE3_tidy, PE4_tidy
+
 ```
-## Create Standard Curve from Lowry Assay
-```{r}
-standards <- data.frame(
-  concentration_mg_per_ml = c(0, 0.1, 0.2, 0.4, 0.6, 0.8, 1.0),
-  absorbance = c(0.05, 0.15, 0.25, 0.45, 0.65, 0.85, 1.05)  # Adjust as needed
+## STEP 5: JOIN THE DATA WITH ITS SAMPLE WEIGHTS SPREADSHEET
+
+Description of `joindf_by_id` Function
+
+The `joindf_by_id` function takes two data frames (`df1` and `df2`) and merges them by matching unique identifiers related to samples, specifically using either a `Cell_ID` column or a `plate well` column.\
+**Key steps and features:** - **Column Cleaning:** Trims whitespace from column names in both data frames to avoid join errors caused by accidental spaces.
+- **Key Column Verification:** Checks that at least one data frame contains a `Cell_ID` column and the other contains a `plate well` column—these serve as the join keys.
+- **Role Assignment:** Depending on which data frame contains `Cell_ID`, that data frame is assigned as the base (`df_cell`), and the other becomes the joining data (`df_plate`).
+- **Rename Join Keys:** Renames both join columns to a common key name (`join_id`) to facilitate a straightforward left join.
+- **Perform Join:** Conducts a left join, keeping all rows from the base data frame and adding matching data from the other.
+- **Identify Unmatched Rows:** Any rows in the larger data frame without matches are saved separately for troubleshooting.
+- **Output Files:**\
+- Saves the merged data frame as a CSV named according to the provided `output_name`.\
+- Writes unmatched rows into a separate CSV file.\
+- **Global Environment Assignment:** Assigns the merged data frame into the global R environment under the same name as the output file (minus the `.csv` extension).
+- **Reporting:** Prints messages listing any unmatched identifiers and returns a summary report containing counts of matched/unmatched rows and file paths of saved CSVs.
+
+```{r join-weights, warning=FALSE}
+# 1. Create output subdirectory
+save_dir <- file.path("output_prot", "export data", "joined_weights_prot")
+dir.create(save_dir, recursive = TRUE, showWarnings = FALSE)
+
+# 2. Build weight and PE data frame lists
+list_weights <- list(
+  pr1_weights,
+  pr2_weights
 )
-lowry_model <- lm(absorbance ~ concentration_mg_per_ml, data = standards)
-summary(lowry_model)
 
-# Plot standard curve
-ggplot(standards, aes(x = concentration_mg_per_ml, y = absorbance)) +
-  geom_point() +
-  geom_smooth(method = 'lm') +
-  labs(title = 'Lowry Standard Curve',
-       x = 'Protein Concentration (mg/mL)',
-       y = 'Absorbance') +
-  theme_minimal()
+pr_list <- list(
+  pr1 = pr1_tidy, 
+  pr2 = pr2_tidy
+)
+
+# 3. Loop and join
+mapply(
+  function(df1, df2, name) {
+    joindf_by_id(
+      df1          = df1,
+      df2          = df2,
+      output_name  = file.path(save_dir, paste0(name, "_weights_joined.csv")),
+      unmatched_out = file.path(save_dir, paste0(name, "_weights_unmatched.csv")),
+      key_df1      = "Cell_ID",
+      key_df2      = "plate well"
+    )
+  },
+  df1 = pr_list,
+  df2 = list_weights,
+  name = names(pr_list),
+  SIMPLIFY = FALSE
+)
+
 ```
-## Estimate Protein Content
-```{r}
-# Calculate protein based on absorbance at 600 nm
-protein_tidy <- protein_tidy %>%
-  mutate(Protein_mg_per_mL = (X600 - coef(lowry_model)[1]) / coef(lowry_model)[2])
 
-# Create dummy metadata if not already available
-protein_tidy <- protein_tidy %>%
-  mutate(ID = Cell_ID,
-         `sample weight` = 10,  # Change as needed
-         date = as.Date("2025-05-09"),
-         join_id = Cell_ID)
+## Create Standard Curve from Lowry Assay
+
+```{r}
+```{r standard-curve, message=FALSE, warning=FALSE}
+
+# Example data: Replace this with your actual data
+# You can also use `read.csv("your_data.csv")` if loading from a file
+
+# Fit linear model
+model <- lm(X600_cor ~ concentration, data = calibration_prot)
+
+# Summary of the model (for table output, if needed)
+summary(model)
+
+# Plot
+ggplot(calibration_prot, aes(x = concentration, y = X600_cor)) +
+  geom_point(size = 3) +
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +
+  labs(
+    title = "Protein Standard Curve (Lowry Method)",
+    x = "Protein Concentration (mg/mL)",
+    y = "Absorbance (600 nm)"
+  ) +
+  annotate(
+    "text", x = max(calibration_prot$concentration) * 0.5, 
+    y = max(calibration_prot$X600_cor) * 0.9,
+    label = paste0("y = ", round(coef(model)[2], 4), "x + ", round(coef(model)[1], 4),
+                   "\nR² = ", round(summary(model)$r.squared, 4)),
+    size = 4, hjust = 0
+  ) +
+  theme_minimal()
+
 ```
 ## Analyze Replicates
 ```{r}

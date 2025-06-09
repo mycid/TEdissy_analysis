@@ -3,8 +3,7 @@ required_packages <- c(
   "readxl", "dplyr", "tidyr", "tidyverse", "purrr", "zoo",
   "ggplot2", "lubridate", "stringr", "tools", "plotly", 
   "here", "broom", "easystats", "performance", "ggrepel", 
-  "effectsize", "rlang", "boot"
-)
+  "effectsize", "rlang", "boot", "emmeans", "multcompView")
 #
 #
 #
@@ -17,25 +16,14 @@ for(pkg in required_packages) {
 #
 #
 #
-library(readxl)
-library(dplyr)
-library(tidyr)
-library(purrr)
-library(stringr)
-library(zoo)
-library(readxl)
-library(performance)
-library(broom)
-library(easystats)
-library(ggplot2)
-library(lubridate)
-library(stringr)
-library(tools)
-library(plotly)
-library(tidyverse)
-library(here)
-library(ggrepel)
-library(ggpubr)
+#
+#
+#
+#
+#
+#
+#
+#
 #
 #
 load_excel_files <- function(input_folder) {
@@ -71,7 +59,26 @@ load_excel_files <- function(input_folder) {
 #
 #
 #
-tidy_and_correct <- function(input_df, blanks, df_name = NULL) {
+##' Tidy and Correct Microspectrometer Plate Data
+##'
+##' This function takes a raw data.frame organized like a microwell plate,
+##' pivots it to long format by Cell_ID, applies blank subtraction per wavelength,
+##' and returns a tidy data.frame of corrected spectral values.
+##'
+##' @param input_df A data.frame containing raw plate readings. One row per well,
+##'   with the first column (or second) marking Row labels (A-H), multiple columns of readings,
+##'   and a final column containing wavelength identifiers.
+##' @param blanks A character vector of Cell_IDs marking which wells are blanks.
+##' @param df_name Optional name. If provided, will assign the result to
+##'   the global environment as <df_name>_tidy.
+##' @return A data.frame in wide format: columns = Cell_ID + one column per wavelength,
+##'   with blank-corrected values. Wells with any negative values are removed and
+##'   their IDs stored in an attribute 'removed_rows_spectral'.
+##' @examples
+##' corrected <- tidy_and_correct(raw_plate_df, blanks = c("A01", "H12"))
+
+# Primary function
+tidy_and_correct <- function(input_df, df_name = NULL) {
   # Check input
   if (!is.data.frame(input_df)) stop("Input must be a dataframe.")
   
@@ -132,23 +139,17 @@ tidy_and_correct <- function(input_df, blanks, df_name = NULL) {
     colnames(tidy_df)[2] <- wl_vector
   }
   
-  blanks_df <- tidy_df %>% dplyr::filter(Cell_ID %in% blanks)
-  blank_means <- blanks_df %>% dplyr::select(-Cell_ID) %>%
-    dplyr::summarise(dplyr::across(everything(), ~mean(.x, na.rm = TRUE)))
+  # Remove rows with negative values (if any)
+  spectral_cols <- names(tidy_df)[-1]
+  negative_flags <- apply(tidy_df[, spectral_cols], 1, function(row) any(row < 0, na.rm = TRUE))
   
-  tidy_corrected <- tidy_df %>%
-    dplyr::mutate(dplyr::across(-Cell_ID, ~ .x - unlist(blank_means)))
-  
-  spectral_cols <- names(tidy_corrected)[-1]
-  negative_flags <- apply(tidy_corrected[, spectral_cols], 1, function(row) any(row < 0, na.rm = TRUE))
-  
-  removed_rows <- tidy_corrected[negative_flags, ]
+  removed_rows <- tidy_df[negative_flags, ]
   if (nrow(removed_rows) > 0) {
     message("Removed rows due to negative values:")
     print(removed_rows$Cell_ID)
   }
   
-  tidy_filtered <- tidy_corrected[!negative_flags, ]
+  tidy_filtered <- tidy_df[!negative_flags, ]
   attr(tidy_filtered, "removed_rows_spectral") <- removed_rows
   
   # Save to global environment if df_name provided
@@ -158,30 +159,56 @@ tidy_and_correct <- function(input_df, blanks, df_name = NULL) {
   
   return(tidy_filtered)
 }
-
 #
 #
-# 
+#
+#
+#
+#
 tidy_all <- function(df_list, blanks_list) {
   if (length(df_list) != length(blanks_list)) {
-    stop("Length of dataframe list and blanks list must match.")
+    stop("Length of df_list and blanks_list must match.")
+  }
+  if (is.null(names(df_list))) {
+    stop("df_list must be a named list.")
   }
   
   for (i in seq_along(df_list)) {
-    df_name <- names(df_list)[i]
+    name   <- names(df_list)[i]
+    raw_df <- df_list[[i]]
     blanks <- blanks_list[[i]]
-    df <- df_list[[i]]
     
-    cat("Processing:", df_name, "with blanks:", toString(blanks), "\n")
+    message("Tidying ", name)
+    tidy_df <- tidy_and_correct(raw_df)
+    assign(paste0(name, "_start"), tidy_df, envir = .GlobalEnv)
+    message("Correcting ", name, " using blank(s): ", paste(blanks, collapse = ", "))
     
-    # Call tidy_and_correct, capture output
-    tidy_df <- tidy_and_correct(df, blanks = blanks)
+    # Check Cell_ID column exists
+    if (!"Cell_ID" %in% colnames(tidy_df)) {
+      stop(paste("Tidy dataframe", name, "must contain a 'Cell_ID' column."))
+    }
     
-    # Assign result to global env with _tidy appended
-    assign(paste0(df_name, "_tidy"), tidy_df, envir = .GlobalEnv)
-    cat("Saved:", paste0(df_name, "_tidy"), "to global environment.\n")
+    # Calculate column-wise mean of blanks
+    blank_means <- tidy_df %>%
+      dplyr::filter(Cell_ID %in% blanks) %>%
+      dplyr::select(where(is.numeric)) %>%
+      dplyr::summarise(across(everything(), ~ mean(.x, na.rm = TRUE))) %>%
+      unlist()
+    
+    # Subtract from all numeric columns
+    corrected_df <- tidy_df %>%
+      dplyr::mutate(dplyr::across(
+        where(is.numeric),
+        ~ .x - blank_means[cur_column()]
+      ))
+    
+    assign(paste0(name, "_tidy"), corrected_df, envir = .GlobalEnv)
+    message("Saved ", name, "_final to global environment.")
   }
+  
+  invisible(NULL)
 }
+
 #
 #
 #
@@ -196,6 +223,44 @@ tidy_all <- function(df_list, blanks_list) {
 #
 #
 #
+correct_all <- function(df_list, blanks_list) {
+  if (length(df_list) != length(blanks_list)) {
+    stop("Length of df_list and blanks_list must match.")
+  }
+  if (is.null(names(df_list))) {
+    stop("df_list must be a named list.")
+  }
+  
+  for (i in seq_along(df_list)) {
+    name    <- names(df_list)[i]
+    df      <- df_list[[i]]
+    blanks  <- blanks_list[[i]]
+    
+    message("Correcting ", name, " using blank(s): ", paste(blanks, collapse = ", "))
+    
+    # Check that Cell_ID column exists
+    if (!"Cell_ID" %in% colnames(df)) {
+      stop(paste("Dataframe", name, "must contain a 'Cell_ID' column."))
+    }
+    
+    # Extract blank rows and calculate mean for each numeric column
+    blank_means <- df %>%
+      dplyr::filter(Cell_ID %in% blanks) %>%
+      dplyr::select(where(is.numeric)) %>%
+      dplyr::summarise(across(everything(), ~ mean(.x, na.rm = TRUE)))
+    
+    # Subtract blank means from numeric columns
+    df_corrected <- df %>%
+      dplyr::mutate(across(where(is.numeric), ~ .x - unlist(blank_means)))
+    
+    # Save to global environment
+    assign(paste0(name, "_corrected"), df_corrected, envir = .GlobalEnv)
+    message("Saved ", name, "_corrected to global environment.")
+  }
+  
+  invisible(NULL)
+}
+
 
   #
   #
@@ -329,10 +394,6 @@ joindf_by_id <- function(df1, df2,
     assign(object_name, result, envir = .GlobalEnv)
   }
   
-  # Print unmatched join_ids
-  repeat_list <- unique(unmatched_df$join_id)
-  cat("\nValues needing repetition:\n")
-  cat(paste0(repeat_list, " needs to be repeated\n"), sep = "")
   
   # Summary report
   report <- list(
@@ -404,13 +465,15 @@ select_best_three <- function(df) {
 #
 #
 #
+# Enhanced analyze_replicates: choose best three, and if exactly three replicates, choose best two
 analyze_replicates <- function(data,
                                id_col = "ID",
                                join_col = "join_id",
                                weight_col = "sample weight",
                                date_col = "date",
                                output_prefix = "replicate_analysis",
-                               choose_best_3 = FALSE) {
+                               choose_best_3 = FALSE,
+                               dir = "output PE/export data") {
   
   # Ensure proper types
   data[[id_col]] <- as.factor(data[[id_col]])
@@ -426,7 +489,7 @@ analyze_replicates <- function(data,
   long_data <- data %>%
     pivot_longer(cols = all_of(numeric_cols), names_to = "measure", values_to = "value")
   
-  # Summary stats with best 3 selection if enabled
+  # Summary stats with best selection if enabled
   summary_long <- long_data %>%
     group_by(.data[[id_col]], measure) %>%
     group_modify(~ {
@@ -434,51 +497,51 @@ analyze_replicates <- function(data,
       n <- nrow(df_sub)
       
       if (choose_best_3 && n > 3) {
+        # More than three: select best three
         selected <- select_best_three(df_sub)
-        included_rows <- selected$included_rows
-        excluded_rows <- selected$excluded_rows
-        
-        # Filter to best 3 for stats
-        df_best <- df_sub[included_rows, , drop = FALSE]
-        
-        # Summarize stats on best 3
-        mean_val <- mean(df_best$value, na.rm = TRUE)
-        sd_val <- sd(df_best$value, na.rm = TRUE)
-        se_val <- sd_val / sqrt(nrow(df_best))
-        cv_val <- sd_val / mean_val
-        max_dev_pct_val <- max(abs(df_best$value - mean_val) / mean_val * 100, na.rm = TRUE)
-        
-        # Included/excluded rows as comma-separated strings (or NA)
-        included_str <- paste(included_rows, collapse = ",")
-        excluded_str <- if (all(is.na(excluded_rows))) NA_character_ else paste(excluded_rows, collapse = ",")
-        
-        tibble(
-          n = nrow(df_best),
-          mean = mean_val,
-          sd = sd_val,
-          se = se_val,
-          cv = cv_val,
-          max_dev_pct = max_dev_pct_val,
-          included_rows = included_str,
-          excluded_rows = excluded_str
-        )
+        keep_rows <- selected$included_rows
+      } else if (choose_best_3 && n == 3) {
+        # Exactly three: select best two
+        selected <- select_best_two(df_sub)
+        keep_rows <- selected$included_rows
       } else {
-        # Normal stats on all replicates (no best 3)
-        mean_val <- mean(df_sub$value, na.rm = TRUE)
-        sd_val <- sd(df_sub$value, na.rm = TRUE)
-        se_val <- sd_val / sqrt(n)
-        cv_val <- sd_val / mean_val
-        max_dev_pct_val <- max(abs(df_sub$value - mean_val) / mean_val * 100, na.rm = TRUE)
-        
-        tibble(
-          n = n,
-          mean = mean_val,
-          sd = sd_val,
-          se = se_val,
-          cv = cv_val,
-          max_dev_pct = max_dev_pct_val
-        )
+        # Default: keep all
+        keep_rows <- seq_len(n)
       }
+      
+      # Ensure keep_rows is a simple integer vector (not matrix)
+      keep_rows <- as.vector(keep_rows)
+      
+      # Subset for stats
+      df_best <- df_sub[keep_rows, , drop = FALSE]
+      m <- nrow(df_best)
+      mean_val <- mean(df_best$value, na.rm = TRUE)
+      sd_val <- sd(df_best$value, na.rm = TRUE)
+      se_val <- sd_val / sqrt(m)
+      cv_val <- sd_val / mean_val
+      max_dev_pct_val <- max(abs(df_best$value - mean_val) / mean_val * 100, na.rm = TRUE)
+      
+      # Build result tibble
+      out <- tibble(
+        n = m,
+        mean = mean_val,
+        sd = sd_val,
+        se = se_val,
+        cv = cv_val,
+        max_dev_pct = max_dev_pct_val
+      )
+      
+      # If using best selection, record included/excluded rows
+      if (choose_best_3 && n >= 3) {
+        included_str <- paste(keep_rows, collapse = ",")
+        excluded <- setdiff(seq_len(n), keep_rows)
+        excluded_str <- if (length(excluded) == 0) NA_character_ else paste(excluded, collapse = ",")
+        out <- out %>%
+          mutate(included_rows = included_str,
+                 excluded_rows = excluded_str)
+      }
+      
+      out
     }) %>%
     ungroup()
   
@@ -498,7 +561,6 @@ analyze_replicates <- function(data,
         names_glue = "{measure}_{.value}"
       )
   }
- 
   
   # Add join_id list, average sample weight, date, and replicate count
   replicate_info <- data %>%
@@ -518,11 +580,20 @@ analyze_replicates <- function(data,
     left_join(replicate_info, by = id_col)
   
   # Write summary
-  summary_csv <- paste0(output_prefix, "_summary.csv")
+  summary_csv <- paste0(dir, output_prefix, "_summary.csv")
   write.csv(final_summary, summary_csv, row.names = FALSE)
   message("Summary saved to: ", summary_csv)
   
   return(final_summary)
+}
+
+# Helper: select_best_two (chooses the pair with smallest difference)
+select_best_two <- function(df) {
+  vals <- df$value
+  pairs <- combn(seq_along(vals), 2)
+  diffs <- apply(pairs, 2, function(idx) abs(vals[idx[1]] - vals[idx[2]]))
+  best_pair <- pairs[, which.min(diffs)]
+  list(included_rows = best_pair)
 }
 #
 #
@@ -646,91 +717,223 @@ get_stats <- function(model, label) {
   
   paste0(label, ": R²=", r2, ", p=", p)
 }
-
-compare_groups <- function(data, response_var, group_var, facet_var = NULL) {
-  library(dplyr)
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+compare_groups <- function(data,
+                           response_var,
+                           group_var,
+                           facet_var  = NULL,
+                           report_dir = "reports",
+                           plot_dir   = "plots") {
+  if (!requireNamespace("ggpubr", quietly = TRUE)) {
+    install.packages("ggpubr")
+  }
   library(ggpubr)
-  library(rlang)
+  # ---- Clean name function
+  clean_name <- function(x) {
+    x %>%
+      str_replace_all("[^a-zA-Z]+", "_") %>%
+      str_remove_all("_$") %>%
+      str_remove_all("^_")
+  }
   
-  # Ensure variables are symbols for tidy evaluation
+  # ---- Helper: compact letter display from posthoc p-values
+  generate_group_letters <- function(posthoc_df) {
+    comps <- str_split_fixed(posthoc_df$comparison, "-", 2)
+    pvals <- setNames(posthoc_df$`p adj`, paste(comps[,1], comps[,2], sep = "-"))
+    cld <- multcompLetters(pvals)
+    tibble::tibble(group = names(cld$Letters), letter = cld$Letters)
+  }
+  
+  if (!dir.exists(report_dir)) dir.create(report_dir, recursive = TRUE)
+  if (!dir.exists(plot_dir))   dir.create(plot_dir, recursive = TRUE)
+  
   response_sym <- sym(response_var)
-  group_sym <- sym(group_var)
+  group_sym    <- sym(group_var)
+  if (!is.null(facet_var)) facet_sym <- sym(facet_var)
   
-  if (!is.null(facet_var)) {
-    facet_sym <- sym(facet_var)
-  }
-  
-  # Convert group to factor and response to numeric
-  data <- data %>%
+  df <- data %>%
     mutate(
-      !!group_sym := as.factor(!!group_sym),
+      !!group_sym    := factor(!!group_sym, levels = unique(data[[group_var]])),
       !!response_sym := as.numeric(!!response_sym)
-    )
+    ) %>%
+    filter(!is.na(!!response_sym), !is.na(!!group_sym))
   
-  # Number of groups
-  num_groups <- nlevels(data[[group_var]])
-  
-  # Run parametric and non-parametric tests
-  if (num_groups == 2) {
-    param_test <- t.test(as.formula(paste(response_var, "~", group_var)), data = data)
-    nonparam_test <- wilcox.test(as.formula(paste(response_var, "~", group_var)), data = data)
-    
-    message("Parametric test result (t-test):")
-    print(param_test)
-    
-    message("Non-parametric test result (Wilcoxon test):")
-    print(nonparam_test)
-    
-    compare_method <- "t.test"
-    compare_method_np <- "wilcox.test"
-    
-  } else if (num_groups > 2) {
-    param_test <- aov(as.formula(paste(response_var, "~", group_var)), data = data)
-    nonparam_test <- kruskal.test(as.formula(paste(response_var, "~", group_var)), data = data)
-    
-    message("Parametric test result (ANOVA):")
-    print(summary(param_test))
-    
-    message("Non-parametric test result (Kruskal-Wallis test):")
-    print(nonparam_test)
-    
-    compare_method <- "anova"
-    compare_method_np <- "kruskal.test"
-    
-  } else {
-    stop("Group variable must have at least 2 levels.")
-  }
-  
-  # Create boxplot with ggpubr
-  p <- ggboxplot(data, x = group_var, y = response_var,
-                 color = group_var, palette = "jco",
-                 add = "jitter", add.params = list(size = 1.2, alpha = 0.5)) +
-    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
-    stat_compare_means(method = compare_method, label = "p.signif") +
-    stat_compare_means(method = compare_method_np, label = "p.signif", label.y = max(data[[response_var]], na.rm = TRUE)*1.1)
-  
-  # Add faceting if requested
   if (!is.null(facet_var)) {
-    p <- p + facet_wrap(as.formula(paste("~", facet_var)))
+    df_split     <- df %>% group_split(!!facet_sym)
+    facet_levels <- df %>% pull(!!facet_sym) %>% as.character() %>% unique()
+  } else {
+    df_split     <- list(df)
+    facet_levels <- "ALL"
   }
   
-  return(p)
-}
-#
-#
-#
-#
-#
-#
-#
-# Function to calculate protein concentration from Lowry model
-calculate_protein_from_lowry <- function(tidy_df, model, absorbance_column = "X600") {
-  if (!absorbance_column %in% names(tidy_df)) {
-    stop(paste("Column", absorbance_column, "not found in tidy_df"))
+  clean_response <- clean_name(response_var)
+  clean_group    <- clean_name(group_var)
+  sub_report_dir <- file.path(report_dir, paste0(clean_response, "_by_", clean_group))
+  dir.create(sub_report_dir, showWarnings = FALSE, recursive = TRUE)
+  
+  all_results <- list()
+  
+  for (i in seq_along(df_split)) {
+    sub_df     <- df_split[[i]]
+    facet_name <- facet_levels[i]
+    
+    summary_tbl <- sub_df %>%
+      group_by(!!group_sym) %>%
+      summarise(
+        n = n(),
+        mean = mean(!!response_sym, na.rm = TRUE),
+        sd   = sd(!!response_sym, na.rm = TRUE),
+        median = median(!!response_sym, na.rm = TRUE),
+        IQR    = IQR(!!response_sym, na.rm = TRUE),
+        .groups = "drop"
+      )
+    write.csv(summary_tbl, file = file.path(sub_report_dir, paste0("summary_", facet_name, ".csv")), row.names = FALSE)
+    
+    ng <- nlevels(sub_df[[group_var]])
+    test_results <- NULL
+    posthoc_results <- NULL
+    group_letters <- NULL
+    
+    if (ng == 2) {
+      fmla <- as.formula(paste(response_var, "~", group_var))
+      t_res <- t.test(fmla, data = sub_df)
+      w_res <- wilcox.test(fmla, data = sub_df)
+      d     <- cohens_d(fmla, data = sub_df)
+      
+      test_results <- tibble::tibble(
+        test        = c("t.test", "wilcox.test"),
+        statistic   = c(t_res$statistic, w_res$statistic),
+        df          = c(t_res$parameter, NA),
+        p_value     = c(t_res$p.value, w_res$p.value),
+        effect_size = c(d$Cohens_d, NA),
+        CI_lower    = c(t_res$conf.int[1], NA),
+        CI_upper    = c(t_res$conf.int[2], NA)
+      )
+      
+    } else {
+      fmla <- as.formula(paste(response_var, "~", group_var))
+      aov_res <- aov(fmla, data = sub_df)
+      kw_res  <- kruskal.test(fmla, data = sub_df)
+      
+      eta2  <- eta_squared(aov_res)
+      r_eta <- rank_eta_squared(fmla, data = sub_df)
+      
+      test_results <- tibble::tibble(
+        test        = c("ANOVA", "Kruskal-Wallis"),
+        statistic   = c(summary(aov_res)[[1]]$`F value`[1], kw_res$statistic),
+        df          = c(paste(summary(aov_res)[[1]]$Df[1], summary(aov_res)[[1]]$Df[2], sep = ", "), kw_res$parameter),
+        p_value     = c(summary(aov_res)[[1]]$`Pr(>F)`[1], kw_res$p.value),
+        effect_size = c(as.numeric(eta2)[1], r_eta$Rank_Eta2[1]),
+        CI_lower    = NA,
+        CI_upper    = NA
+      )
+      print("Groups present in this subset:")
+      print(unique(sub_df[[group_var]]))
+      
+      print("ANOVA p-value:")
+      print(summary(aov_res)[[1]]$`Pr(>F)`[1])
+      
+      #print("Tukey results:")
+     # print(TukeyHSD(aov_res))
+      
+      if (summary(aov_res)[[1]]$`Pr(>F)`[1] < 0.05) {
+        tukey <- TukeyHSD(aov_res)
+        posthoc_results <- as.data.frame(tukey[[1]])
+        posthoc_results$comparison <- rownames(posthoc_results)
+        rownames(posthoc_results) <- NULL
+        group_letters <- generate_group_letters(posthoc_results)
+      } else if (kw_res$p.value < 0.05) {
+        ph <- pairwise.wilcox.test(sub_df[[response_var]], sub_df[[group_var]], p.adjust.method = "BH")
+        posthoc_results <- as.data.frame(as.table(ph$p.value)) %>%
+          filter(!is.na(Freq)) %>%
+          rename(comparison_1 = Var1, comparison_2 = Var2, p_value = Freq)
+      }
+    }
+    
+    write.csv(test_results, file = file.path(sub_report_dir, paste0("tests_", facet_name, ".csv")), row.names = FALSE)
+    if (!is.null(posthoc_results)) write.csv(posthoc_results, file = file.path(sub_report_dir, paste0("posthoc_", facet_name, ".csv")), row.names = FALSE)
+    if (!is.null(group_letters)) write.csv(group_letters, file = file.path(sub_report_dir, paste0("group_letters_", facet_name, ".csv")), row.names = FALSE)
+    if (is.null(group_letters)) {
+      message("No group letters were generated — likely due to too few groups or lack of significant differences.")
+    }
+    # ---- Annotation positions (safe join)
+    if (!is.null(group_letters)) {
+      label_positions <- sub_df %>%
+        mutate(group = as.character(!!group_sym)) %>%
+        group_by(group) %>%
+        summarise(y_pos = max(!!response_sym, na.rm = TRUE) * 1.05, .groups = "drop")
+      
+      group_letters <- group_letters %>%
+        mutate(group = as.character(group))
+      
+      label_df <- left_join(group_letters, label_positions, by = "group")
+      
+      # Debug preview
+      print("Label DF preview:")
+      print(label_df)
+    }
+    
+    sub_df[[group_var]] <- factor(sub_df[[group_var]], levels = levels(df[[group_var]]))
+    
+    p <- ggboxplot(
+      sub_df,
+      x        = group_var,
+      y        = response_var,
+      color    = group_var,
+      palette  = "jco",
+      add      = "jitter",
+      add.params = list(size = 2, alpha = 0.7, width = 0.3),
+      outlier.shape = NA
+    ) +
+      coord_cartesian(ylim = c(0, max(df[[response_var]], na.rm = TRUE) * 1.2)) +
+      theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+    
+    if (!is.null(facet_var)) {
+      p <- p + facet_wrap(as.formula(paste("~", facet_var)))
+    }
+    
+    if (exists("label_df") && nrow(label_df) > 0 && all(!is.na(label_df$y_pos))) {
+      p <- p + geom_text(
+        data = label_df,
+        aes(x = group, y = y_pos, label = letter),
+        vjust = -0.5,
+        fontface = "bold",
+        size = 2.5,
+        inherit.aes = FALSE
+      )
+    }
+    
+    plot_filename <- paste0("plot_", clean_response, "_by_", clean_group, "_", facet_name, ".png")
+    ggsave(filename = file.path(plot_dir, plot_filename), plot = p, width = 8, height = 6)
+    print(p)
+    
+    all_results[[facet_name]] <- list(
+      summary   = summary_tbl,
+      tests     = test_results,
+      posthoc   = posthoc_results,
+      cld       = group_letters
+    )
   }
-  tidy_df %>%
-    mutate(Protein_mg_per_mL = (.[[absorbance_column]] - coef(model)[1]) / coef(model)[2])
+  
+  message("Reports saved to: ", normalizePath(sub_report_dir))
+  message("Plots saved to: ", normalizePath(plot_dir))
+  invisible(all_results)
 }
+
+#
+
 #
 #
 #
@@ -752,28 +955,33 @@ calculate_protein_from_lowry <- function(tidy_df, model, absorbance_column = "X6
 compare_groups_bootstrap <- function(data,
                                      response_var,
                                      group_var,
-                                     facet_var     = NULL,
-                                     n_boot         = 5000,
-                                     conf_level     = 0.95,
-                                     assumptions_test = FALSE) {
+                                     facet_var       = NULL,
+                                     n_boot           = 5000,
+                                     conf_level       = 0.95,
+                                     assumptions_test = FALSE,
+                                     report_dir       = "reports",
+                                     plot_dir         = "plots") {
+  library(dplyr); library(purrr); library(boot); library(ggplot2)
+  library(tibble); library(tidyr); library(effsize); library(stringr)
   
-  # Convert string inputs to symbols
-  response_sym <- sym(response_var)
-  group_sym    <- sym(group_var)
-  
-  if (!is.null(facet_var)) {
-    facet_sym <- sym(facet_var)
+  clean_name <- function(x) {
+    x %>%
+      str_replace_all("[^a-zA-Z]+", "_") %>%
+      str_remove_all("_$") %>%
+      str_remove_all("^_")
   }
   
-  # Ensure group is factor and response is numeric; drop rows with NA in key columns
+  response_sym <- sym(response_var)
+  group_sym    <- sym(group_var)
+  if (!is.null(facet_var)) facet_sym <- sym(facet_var)
+  
   df <- data %>%
     mutate(
-      !!group_sym    := as.factor(!!group_sym),
+      !!group_sym    := factor(!!group_sym, levels = unique(data[[group_var]])),
       !!response_sym := as.numeric(!!response_sym)
     ) %>%
     filter(!is.na(!!response_sym), !is.na(!!group_sym))
   
-  # If facet_var is provided, split dataset by each facet level; else treat all as one block
   if (!is.null(facet_var)) {
     df_split     <- df %>% group_split(!!facet_sym)
     facet_levels <- df %>% pull(!!facet_sym) %>% as.character() %>% unique()
@@ -782,238 +990,188 @@ compare_groups_bootstrap <- function(data,
     facet_levels <- "ALL"
   }
   
-  # Utility: bootstrap‐statistic function for a single group’s mean
-  boot_mean_fn <- function(dat, indices) {
-    d_sub <- dat[indices]
-    return(mean(d_sub))
-  }
+  clean_response <- clean_name(response_var)
+  clean_group    <- clean_name(group_var)
+  sub_report_dir <- file.path(report_dir, paste0(clean_response, "_by_", clean_group))
+  sub_plot_dir   <- file.path(plot_dir, paste0(clean_response, "_by_", clean_group))
+  dir.create(sub_report_dir, showWarnings = FALSE, recursive = TRUE)
+  dir.create(sub_plot_dir,   showWarnings = FALSE, recursive = TRUE)
   
-  # Utility: compute pairwise effect‐size bootstraps (raw mean diff & Cohen’s d)
+  boot_mean_fn <- function(dat, i) mean(dat[i])
+  
   compute_effsize_boot <- function(x, y, n_boot, conf_level) {
-    pooled  <- c(x, y)
-    grp_ind <- c(rep(1, length(x)), rep(2, length(y)))
-    dat_for_boot <- data.frame(val = pooled, grp = grp_ind)
+    pooled <- data.frame(val = c(x, y), grp = rep(c(1,2), c(length(x), length(y))))
     
-    # (1) Raw mean‐difference bootstrap
-    stat_mean_diff <- function(d, i) {
-      d2 <- d[i, ]
-      m1 <- mean(d2$val[d2$grp == 1])
-      m2 <- mean(d2$val[d2$grp == 2])
-      return(m1 - m2)
+    md_stat <- function(d, ix) {
+      d2 <- d[ix,]
+      mean(d2$val[d2$grp==1]) - mean(d2$val[d2$grp==2])
     }
-    boot_mean_diff <- boot(data = dat_for_boot, statistic = stat_mean_diff, R = n_boot)
-    mean_diff_ci  <- boot.ci(boot_mean_diff, conf = conf_level, type = "perc")
-    
-    mean_diff_est   <- mean(x) - mean(y)
-    mean_diff_lower <- mean_diff_ci$percent[4]
-    mean_diff_upper <- mean_diff_ci$percent[5]
-    
-    # (2) Cohen’s d bootstrap (pooled‐SD version)
-    cohen_d_stat <- function(d, i) {
-      d2 <- d[i, ]
-      x2 <- d2$val[d2$grp == 1]
-      y2 <- d2$val[d2$grp == 2]
-      coh <- cohens_d(x2, y2, pooled_sd = TRUE)
-      return(coh$Cohens_d)
+    cd_stat <- function(d, ix) {
+      d2 <- d[ix,]
+      effsize::cohen.d(d2$val[d2$grp==1], d2$val[d2$grp==2], pooled = TRUE)$estimate
     }
-    boot_cohend   <- boot(data = dat_for_boot, statistic = cohen_d_stat, R = n_boot)
-    cohen_d_ci    <- boot.ci(boot_cohend, conf = conf_level, type = "perc")
     
-    cohens_d_est   <- cohens_d(x, y, pooled_sd = TRUE)$Cohens_d
-    cohens_d_lower <- cohen_d_ci$percent[4]
-    cohens_d_upper <- cohen_d_ci$percent[5]
+    b_md <- boot(pooled, md_stat, R = n_boot)
+    ci_md <- tryCatch({
+      boot.ci(b_md, conf = conf_level, type = "perc")$percent[4:5]
+    }, error = function(e) c(NA, NA))
     
-    return(tibble(
-      mean_diff       = mean_diff_est,
-      mean_diff_lower = mean_diff_lower,
-      mean_diff_upper = mean_diff_upper,
-      cohens_d        = cohens_d_est,
-      cohens_d_lower  = cohens_d_lower,
-      cohens_d_upper  = cohens_d_upper
-    ))
+    b_cd <- boot(pooled, cd_stat, R = n_boot)
+    ci_cd <- tryCatch({
+      boot.ci(b_cd, conf = conf_level, type = "perc")$percent[4:5]
+    }, error = function(e) c(NA, NA))
+    
+    cohens_d_point <- effsize::cohen.d(x, y, pooled = TRUE)$estimate
+    
+    tibble(
+      mean_diff       = mean(x) - mean(y),
+      mean_diff_lower = ci_md[1],
+      mean_diff_upper = ci_md[2],
+      cohens_d        = cohens_d_point,
+      cohens_d_lower  = ci_cd[1],
+      cohens_d_upper  = ci_cd[2]
+    )
   }
   
-  # Prepare storage for summaries and plots
-  all_summaries <- list()
-  all_plots     <- list()
+  assign_overlap_letters <- function(df) {
+    letters <- LETTERS
+    current_letter <- 1
+    df$letter <- NA
+    for (i in seq_len(nrow(df))) {
+      if (is.na(df$letter[i])) {
+        df$letter[i] <- letters[current_letter]
+        for (j in seq((i + 1), nrow(df))) {
+          if (!anyNA(c(df$ci_lower[j], df$ci_upper[j], df$ci_lower[i], df$ci_upper[i])) &&
+              df$ci_lower[j] <= df$ci_upper[i] && df$ci_upper[j] >= df$ci_lower[i]) {
+            df$letter[j] <- letters[current_letter]
+          }
+        }
+        current_letter <- current_letter + 1
+      }
+    }
+    return(df)
+  }
   
-  # Iterate over each facet (or single “ALL” block)
+  
+  all_summaries <- list()
+  
   for (i in seq_along(df_split)) {
     sub_df     <- df_split[[i]]
     facet_name <- facet_levels[i]
-    
-    # Identify group levels within this facet
     grp_levels <- levels(sub_df[[group_var]])
     
-    # --------------------------------------
-    # 1) Bootstrap each group’s mean + keep the boot objects
-    # --------------------------------------
+    if (length(grp_levels) < 2) {
+      warning("Facet '", facet_name, "' skipped: not enough groups for comparison.")
+      next
+    }
+    
     group_boot_list <- map(grp_levels, function(g) {
-      vals     <- sub_df %>% filter((!!group_sym) == g) %>% pull(!!response_sym)
-      boot_res <- boot(data = vals, statistic = boot_mean_fn, R = n_boot)
-      
-      # Extract CI
-      ci <- boot.ci(boot_res, conf = conf_level, type = "perc")
+      vals <- sub_df %>% filter((!!group_sym)==g) %>% pull(!!response_sym)
+      b    <- boot(vals, boot_mean_fn, R = n_boot)
+      ci   <- boot.ci(b, conf = conf_level, type = "perc")$percent[4:5]
       tibble(
-        group     = g,
-        mean_est  = mean(vals),
-        ci_lower  = ci$percent[4],
-        ci_upper  = ci$percent[5],
-        n         = length(vals),
-        boot_obj  = list(boot_res)   # store the boot object
+        group    = g,
+        mean_est = mean(vals),
+        ci_lower = ci[1],
+        ci_upper = ci[2],
+        n        = length(vals)
       )
-    }) %>%
-      bind_rows()
+    }) %>% bind_rows()
     
-    # Extract a clean summary of means ± CI (dropping the boot objects themselves)
-    group_boot_res <- group_boot_list %>%
-      select(group, mean_est, ci_lower, ci_upper, n)
-    
-    # --------------------------------------
-    # 2) Pairwise effect‐size bootstraps
-    # --------------------------------------
     pairwise <- combn(grp_levels, 2, simplify = FALSE) %>%
-      set_names(map_chr(., ~ paste0(.x[1], "_vs_", .x[2]))) %>%
-      map_dfr(function(pair) {
-        x <- sub_df %>% filter((!!group_sym) == pair[1]) %>% pull(!!response_sym)
-        y <- sub_df %>% filter((!!group_sym) == pair[2]) %>% pull(!!response_sym)
-        
-        compute_effsize_boot(x, y, n_boot, conf_level) %>%
-          mutate(
-            group1 = pair[1],
-            group2 = pair[2]
-          )
+      map_dfr(function(p) {
+        compute_effsize_boot(
+          x = sub_df %>% filter((!!group_sym)==p[1]) %>% pull(!!response_sym),
+          y = sub_df %>% filter((!!group_sym)==p[2]) %>% pull(!!response_sym),
+          n_boot, conf_level
+        ) %>%
+          mutate(group1 = p[1], group2 = p[2])
       })
     
-    # --------------------------------------
-    # 3) (Optional) Assumptions tests & bootstrap‐distribution plot
-    # --------------------------------------
-    assumption_plot <- NULL
-    bartlett_test   <- NULL
-    
+    bartlett_test <- NULL
     if (assumptions_test) {
-      # 3a) Combine bootstrap replicates of group means into one data frame
-      boot_dists_df <- group_boot_list %>%
-        select(group, boot_obj) %>%
-        unnest_longer(boot_obj) %>% 
-        # boot_obj is a list; each entry is a 'boot' object whose $t is a matrix (n_boot × 1)
-        mutate(boot_mean = map_dbl(boot_obj, ~ .x$t[, 1])) %>%
-        select(group, boot_mean)
-      
-      # 3b) Plot the bootstrap distributions of group means (faceted by group)
-      assumption_plot <- ggplot(boot_dists_df, aes(x = boot_mean, fill = group)) +
-        geom_density(alpha = 0.5) +
-        facet_wrap(~ group, scales = "free") +
-        theme_minimal() +
-        labs(
-          title = paste0("Bootstrap Distribution of Group Means (", response_var, ") [", facet_name, "]"),
-          x     = paste("Bootstrapped means of", response_var),
-          y     = "Density"
-        ) +
-        theme(legend.position = "none")
-      
-      # 3c) Run Bartlett’s test for homogeneity of variances (exploratory)
       bartlett_test <- tryCatch(
-        {
-          bartlett.test(
-            formula = as.formula(paste(response_var, "~", group_var)),
-            data    = sub_df
-          )
-        },
-        error = function(e) {
-          warning("Bartlett's test failed: ", e$message)
-          return(NULL)
-        }
+        bartlett.test(as.formula(paste(response_var, "~", group_var)), data = sub_df),
+        error = function(e) NULL
       )
     }
     
-    # --------------------------------------
-    # 4) Assemble this facet’s summary
-    # --------------------------------------
-    summary_this <- list(
-      facet                 = facet_name,
-      group_bootstrap_means = group_boot_res,
+    group_boot_list <- group_boot_list %>%
+      arrange(desc(mean_est)) %>%
+      mutate(group = as.character(group))
+    
+    group_boot_list <- assign_overlap_letters(group_boot_list)
+    
+    write.csv(group_boot_list, file = file.path(sub_report_dir, paste0("means_", facet_name, ".csv")), row.names = FALSE)
+    write.csv(pairwise,        file = file.path(sub_report_dir, paste0("effects_", facet_name, ".csv")), row.names = FALSE)
+    write.csv(group_boot_list %>% select(group, letter),
+              file = file.path(sub_report_dir, paste0("group_letters_", facet_name, ".csv")), row.names = FALSE)
+    
+    all_summaries[[facet_name]] <- list(
+      group_bootstrap_means = group_boot_list,
       pairwise_effectsizes  = pairwise,
-      bartlett_test         = bartlett_test
+      bartlett_test         = bartlett_test,
+      group_letters         = group_boot_list %>% select(group, letter)
     )
     
-    # --------------------------------------
-    # 5) Create the main plots
-    # --------------------------------------
-    # 5a) Plot 1: Bootstrapped group means ± CI
-    p1 <- ggplot(group_boot_res, aes(x = group, y = mean_est)) +
-      geom_point(size = 3, color = "steelblue") +
-      geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper),
-                    width = 0.25, color = "steelblue") +
+    p1 <- ggplot(group_boot_list, aes(x = group, y = mean_est)) +
+      geom_point(size = 3) +
+      geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), width = 0.2) +
+      geom_text(aes(label = letter, y = ci_upper * 1.05), vjust = 0, fontface = "bold", size = 3) +
       theme_minimal() +
       labs(
-        title = paste0("Bootstrapped Means ± ", conf_level*100, "% CI (", facet_name, ")"),
-        x     = group_var,
-        y     = paste0("Mean of ", response_var)
+        title = paste0("Bootstrapped Means ± ", conf_level * 100, "% CI [", facet_name, "]"),
+        x     = group_var, y = response_var
       ) +
       theme(axis.text.x = element_text(angle = 45, hjust = 1))
+    print(p1)
+    ggsave(file.path(sub_plot_dir, paste0("means_", facet_name, ".png")), p1, width = 8, height = 6)
     
-    # 5b) Plot 2: Pairwise effect sizes (mean_diff & Cohen’s d) ± CI
-    pairwise_plot_data <- pairwise %>%
-      pivot_longer(cols = c(mean_diff, cohens_d),
-                   names_to   = "metric",
-                   values_to  = "estimate") %>%
+    df2 <- pairwise %>%
+      pivot_longer(c(mean_diff, cohens_d), names_to = "metric", values_to = "est") %>%
       mutate(
-        lower      = if_else(metric == "mean_diff", mean_diff_lower, cohens_d_lower),
-        upper      = if_else(metric == "mean_diff", mean_diff_upper, cohens_d_upper),
-        comparison = paste0(group1, " vs ", group2)
+        lower = ifelse(metric=="mean_diff", mean_diff_lower, cohens_d_lower),
+        upper = ifelse(metric=="mean_diff", mean_diff_upper, cohens_d_upper),
+        comp  = paste(group1, "vs", group2)
       )
-    
-    p2 <- ggplot(pairwise_plot_data, aes(x = comparison, y = estimate, color = metric)) +
-      geom_point(position = position_dodge(width = 0.5), size = 3) +
+    p2 <- ggplot(df2, aes(comp, est, color = metric)) +
+      geom_point(position = position_dodge(0.5), size = 3) +
       geom_errorbar(aes(ymin = lower, ymax = upper),
-                    position = position_dodge(width = 0.5),
-                    width    = 0.2) +
+                    position = position_dodge(0.5), width = 0.2) +
       coord_flip() +
       theme_minimal() +
       labs(
-        title = paste0("Pairwise Effect Sizes ± ", conf_level*100, "% CI (", facet_name, ")"),
-        x     = "Comparison",
-        y     = "Estimate"
-      ) +
-      scale_color_manual(
-        values = c("mean_diff" = "darkgreen", "cohens_d" = "firebrick"),
-        labels = c("Mean Difference", "Cohen's d"),
-        name   = NULL
+        title = paste0("Pairwise Effects ± ", conf_level * 100, "% CI [", facet_name, "]"),
+        x = "", y = "Estimate"
       )
+    print(p2)
+    ggsave(file.path(sub_plot_dir, paste0("effects_", facet_name, ".png")), p2, width = 9, height = 6)
     
-    # 5c) If assumptions_test = TRUE, include the bootstrap‐distribution plot as well
     if (assumptions_test) {
-      all_plots[[facet_name]] <- list(
-        boot_means_plot       = p1,
-        pairwise_effects_plot = p2,
-        boot_dist_plot        = assumption_plot
-      )
-    } else {
-      all_plots[[facet_name]] <- list(
-        boot_means_plot       = p1,
-        pairwise_effects_plot = p2,
-        boot_dist_plot        = NULL
-      )
+      boot_dists_df <- map2_df(group_boot_list$group, group_boot_list$n, function(grp, n) {
+        tibble(
+          group     = grp,
+          boot_mean = boot(data = sub_df %>% filter((!!group_sym)==grp) %>% pull(!!response_sym),
+                           statistic = boot_mean_fn, R = n_boot)$t[,1]
+        )
+      })
+      p3 <- ggplot(boot_dists_df, aes(boot_mean)) +
+        geom_density(fill = "steelblue", alpha = 0.4) +
+        facet_wrap(~group, scales = "free") +
+        theme_minimal() +
+        labs(
+          title = paste0("Bootstrap Density [", facet_name, "]"),
+          x     = paste("Bootstrapped", response_var)
+        )
+      print(p3)
+      ggsave(file.path(sub_plot_dir, paste0("density_", facet_name, ".png")), p3, width = 9, height = 6)
     }
-    
-    # 6) Store this facet’s summary
-    all_summaries[[facet_name]] <- summary_this
   }
   
-  # Return a list containing:
-  #  - $summary:    a named list of summaries (one per facet), including group means, pairwise effects, and Bartlett’s test object (if run)
-  #  - $plots:      a named list of lists (one per facet) containing:
-  #                  • boot_means_plot
-  #                  • pairwise_effects_plot
-  #                  • boot_dist_plot (NULL unless assumptions_test = TRUE)
-  return(list(
-    summary = all_summaries,
-    plots   = all_plots
-  ))
+  message("Reports saved to: ", normalizePath(sub_report_dir))
+  message("Plots saved to: ", normalizePath(sub_plot_dir))
+  return(invisible(all_summaries))
 }
-
-
 #
 #
 #
@@ -1025,20 +1183,38 @@ compare_groups_bootstrap <- function(data,
 #
 #
 #
-# ── (Optional) Function to also add standard‐error-of‐fit using the clean Run 2 model ────────
-
-#' add_PE_with_se
-#'
-#' Given a dataframe containing a column of fluorescence values (Xred),
-#' adds two new columns:
-#'   1) Predicted PE (mg/g) based on the cleaned Run 2 model
-#'   2) Standard error of the fitted mean (SE) for each prediction
-#'
-#' @param df        A data frame.
-#' @param fluor_col String: name of the column in df containing the fluorescence (Xred) values.
-#' @param pred_col  String: name of the new predicted PE column.
-#' @param se_col    String: name of the new standard‐error column.
-#' @return          A new data frame with additional columns `pred_col` and `se_col`.
+#
+#
+#
+#
+calc_PE_from_Xred <- function(df, fluor_col = "Xred", new_col = "PE_predicted_mg_per_g") {
+  intercept <- coef_intercept
+  slope     <- coef_slope
+  
+  # Ensure the fluorescence column exists
+  if (!fluor_col %in% names(df)) {
+    stop(glue::glue("Column '{fluor_col}' not found in the input data frame."))
+  }
+  
+  # Compute predicted PE and add as a new column
+  df[[new_col]] <- intercept + slope * df[[fluor_col]]
+  return(df)
+}
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
 add_PE_with_se <- function(df, fluor_col = "Xred",
                            pred_col = "PE_pred_run2_mg_per_g",
                            se_col   = "PE_se_run2") {
@@ -1054,21 +1230,83 @@ add_PE_with_se <- function(df, fluor_col = "Xred",
   df[[se_col]]   <- preds$se.fit
   return(df)
 }
-
-# Example: apply to the master dataset
-df_combined <- add_PE_with_se(df_combined,
-                              fluor_col = "Xred",
-                              pred_col  = "PE_pred_run2_mg_per_g",
-                              se_col    = "PE_se_run2")
-
-# View the first few rows to confirm
-df_combined %>%
-  select(join_id, run, Xred, PE_mg_per_g_sample,
-         PE_pred_run2_mg_per_g, PE_se_run2) %>%
-  head(10) %>%
-  print()
-
-
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+generate_group_letters <- function(posthoc_df) {
+  library(multcompView)
+  library(stringr)
+  
+  # Split the "comparison" column into two groups
+  comps <- str_split_fixed(posthoc_df$comparison, "-", 2)
+  
+  # Create a named vector of p-values
+  pvals <- setNames(posthoc_df$`p adj`, paste(comps[,1], comps[,2], sep = "-"))
+  
+  # Run multcompView
+  cld <- multcompLetters(pvals)
+  
+  # Return a data frame: group and its assigned letter
+  tibble::tibble(
+    group = names(cld$Letters),
+    letter = cld$Letters
+  )
+}
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+create_lowry_calibration <- function(df,
+                                     sample_col = "sample_id",
+                                     absorbance_col = "absorbance") {
+  library(dplyr)
+  library(ggplot2)
+  
+  # Filter out standard entries and extract concentration
+  df_standards <- df %>%
+    filter(grepl("^ST_", .data[[sample_col]])) %>%
+    mutate(
+      concentration = as.numeric(gsub("ST_", "", .data[[sample_col]])),
+      absorbance = as.numeric(.data[[absorbance_col]])
+    )
+  
+  # Fit linear model
+  model <- lm(absorbance ~ concentration, data = df_standards)
+  
+  # Plot
+  p <- ggplot(df_standards, aes(x = concentration, y = absorbance)) +
+    geom_point() +
+    geom_smooth(method = "lm", se = FALSE, color = "blue") +
+    labs(
+      title = "Lowry Calibration Curve",
+      x = "BSA Concentration (mg/mL)",
+      y = "Absorbance"
+    ) +
+    theme_minimal()
+  
+  list(model = model, plot = p)
+}
 
 
 
