@@ -6,6 +6,7 @@ output: html_document
 editor_options: 
   markdown: 
     wrap: sentence
+
 ---
 
 This script analyzes absorption and fluorescence data from all observations in my study of [C. chamissoi](https://algaex.pe/en/raw-materials/alga-chondracanthus-chamissoi/).\
@@ -48,7 +49,7 @@ getwd()
 
 ```{r load-excel-files, warning=FALSE}
 # 1. Define the folder containing all Excel inputs
-input_folder <- "Input PE"
+input_folder <- "car_ftir_input"
 
 # 2. Find all .xlsx files (full paths), excluding temp files that start with "~$"
 excel_files <- list.files(

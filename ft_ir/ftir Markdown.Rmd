@@ -1,0 +1,95 @@
+---
+title: "ft_ir"
+author: "Trevor"
+date: "2025-06-10"
+output: html_document
+params:
+  plot_dir:    "output_ftir/plots"
+  data_dir:    "output_ftir/export_data"
+  report_dir:  "output_ftit/reports"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+source("../process_plate_run.R")
+```
+
+## Load script and directories
+```{r}
+# Source script from top-level project folder
+source("../process_plate_run.R")
+#— 1. pull from params (or use defaults)
+  
+plot_dir   <- params$plot_dir   %||% "output_ftir/plots"
+data_dir   <- params$data_dir   %||% "output_ftir/export_data"
+report_dir <- params$report_dir %||% "output_ftir/reports"
+
+#— 2. create all dirs
+walk(
+  c(plot = plot_dir, data = data_dir, reports = report_dir),
+  ~ if (!dir_exists(.x)) dir_create(.x, recurse = TRUE)
+)
+
+#— 3. register plot_dir with knitr
+opts_chunk$set(fig.path = paste0(plot_dir, "/"))
+#
+```
+
+## Load input data
+
+```{r}
+# Define input folder
+input_folder <- "/car_ftir_input/"
+getwd()
+# List all CSV files
+all_files <- list.files(input_folder, pattern = "\\.csv$", full.names = TRUE)
+
+# Identify standard and metadata files
+standard_file <- all_files[str_detect(all_files, "standard_kappa")]
+metadata_file <- all_files[str_detect(all_files, "sample_data_limited")]
+
+# Real sample CSVs (exclude standard and metadata)
+sample_files <- setdiff(all_files, c(standard_file, metadata_file))
+
+# Extract sample IDs (filename without .csv)
+sample_ids <- tools::file_path_sans_ext(basename(sample_files))
+
+# ---- Load metadata ----
+sample_data_limited <- read_csv(metadata_file, show_col_types = FALSE)
+
+# ---- Load and clean spectra ----
+read_clean_spectrum <- function(file_path, sample_id) {
+  read_csv(
+    file = file_path,
+    skip = 1,  # Skip metadata row
+    col_names = TRUE,
+    show_col_types = FALSE
+  ) %>%
+    rename(Wavenumber = 1, Absorbance = 2) %>%
+    pivot_wider(names_from = Wavenumber, values_from = Absorbance) %>%
+    mutate(Sample = sample_id)
+}
+
+# Apply to all sample files
+spectra_list <- map2(sample_files, sample_ids, read_clean_spectrum)
+
+# ---- Load and clean standard ----
+standard_spectrum <- read_clean_spectrum(standard_file, "standard")
+
+# Make dummy metadata for standard (matching metadata columns, all values "standard")
+dummy_metadata <- tibble(Sample = "standard")
+missing_cols <- setdiff(names(sample_data_limited), names(dummy_metadata))
+for(col in missing_cols) dummy_metadata[[col]] <- "standard"
+dummy_metadata <- dummy_metadata %>% select(names(sample_data_limited)) # ensure column order
+
+# Combine sample and standard spectra
+spectra_combined <- bind_rows(bind_rows(spectra_list), standard_spectrum)
+
+# Combine sample metadata and standard dummy metadata
+metadata_combined <- bind_rows(sample_data_limited %>%
+                                 rename(Sample = ID), dummy_metadata)
+
+# Join spectra with metadata
+full_data <- left_join(spectra_combined, metadata_combined, by = "Sample")
+```
+

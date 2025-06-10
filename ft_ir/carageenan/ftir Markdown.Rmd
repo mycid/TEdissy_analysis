@@ -1,0 +1,647 @@
+---
+title: "ft_ir"
+author: "Trevor"
+date: "2025-06-10"
+output: html_document
+params:
+  # These paths are now relative to the project root directory
+  plot_dir:   "output_ftir/plots"
+  data_dir:   "output_ftir/export_data"
+  # POTENTIAL TYPO: You had "output_ftit". I changed it to "output_ftir" for consistency.
+  report_dir: "output_ftir/reports" 
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+library("here")
+source(here("process_plate_run.R"))
+
+opts_chunk$set(
+  echo = TRUE, 
+  warning = FALSE, 
+  message = FALSE
+)
+```
+
+## Load script and directories
+```{r}
+# Source script from top-level project folder
+# --- 1. Define directory paths using here() ---
+# Pull paths from the YAML params, provide a default, and then wrap in here()
+# to create a full, project-aware path.
+
+# Ensure 'here', 'fs', 'dplyr', 'tidyr', 'readr', 'purrr', 'stringr' are loaded
+# install.packages(c("here", "fs", "dplyr", "tidyr", "readr", "purrr", "stringr")) # Uncomment if not installed
+library(here)
+library(fs)
+library(dplyr)
+library(tidyr)
+library(readr) # For read_csv
+library(purrr) # For map2 and walk
+library(stringr) # For str_detect
+
+# Dummy params list if running outside of a full R Markdown/Quarto project setup
+# In a real project, these would come from your _quarto.yml or _bookdown.yml etc.
+# If you are running this in an .R script directly without project setup,
+# you might need to define 'params' like this for testing:
+if (!exists("params")) {
+  params <- list(
+    plot_dir = "output_ftir/plots",
+    data_dir = "output_ftir/export_data",
+    report_dir = "output_ftir/reports"
+  )
+}
+# Define a fallback for `opts_chunk$set` if not in Knitr/Quarto env
+if (!exists("opts_chunk")) {
+  opts_chunk <- list(set = function(...) NULL)
+}
+
+
+plot_dir    <- here(params$plot_dir    %||% "output_ftir/plots")
+data_dir    <- here(params$data_dir    %||% "output_dir/export_data") # Corrected path to output_dir
+report_dir <- here(params$report_dir %||% "output_ftir/reports")
+
+message("--- Initializing directory paths ---")
+message(paste("Plot Directory:", plot_dir))
+message(paste("Data Export Directory:", data_dir))
+message(paste("Report Directory:", report_dir))
+
+
+# --- 2. Create all directories in a single, clean step ---
+all_dirs <- c(plot_dir, data_dir, report_dir)
+walk(all_dirs, dir_create, recurse = TRUE)
+message("All output directories checked/created.")
+
+
+# --- 3. Register the plot directory with knitr ---
+opts_chunk$set(fig.path = plot_dir)
+
+
+# --- 4. Load input data ---
+input_folder <- "car_ftir_input"
+message(paste("Checking input folder:", input_folder))
+
+# Ensure 'car_ftir_input' exists and contains your CSVs, or adjust path
+if (!dir_exists(input_folder)) {
+  stop(paste("DEBUG ERROR: Input folder '", input_folder, "' not found. Please ensure it exists in your project root and contains your data.", sep=""))
+}
+
+all_files <- list.files(input_folder, pattern = "\\.csv$", full.names = TRUE)
+message(paste("Found", length(all_files), "CSV files in input folder."))
+# print(all_files) # Uncomment to see the list of files found
+
+# Check if essential files are found
+if (!any(str_detect(all_files, "standard_kappa"))) {
+  stop("DEBUG ERROR: 'standard_kappa.csv' not found in input folder. Please ensure it is present.")
+}
+if (!any(str_detect(all_files, "sample_data_limited"))) {
+  stop("DEBUG ERROR: 'sample_data_limited.csv' not found in input folder. Please ensure it is present.")
+}
+
+standard_file <- all_files[str_detect(all_files, "standard_kappa")]
+metadata_file <- all_files[str_detect(all_files, "sample_data_limited")]
+sample_files <- setdiff(all_files, c(standard_file, metadata_file))
+sample_ids <- tools::file_path_sans_ext(basename(sample_files))
+message(paste("Identified", length(sample_files), "sample spectral files."))
+
+# ---- Load metadata ----
+message(paste("Loading metadata file from:", metadata_file))
+sample_data_limited <- tryCatch({
+  read_csv(metadata_file, show_col_types = FALSE) %>%
+    rename(Sample = ID) # Ensure 'ID' is renamed to 'Sample'
+}, error = function(e) {
+  stop(paste("DEBUG ERROR: Failed to load or process metadata file '", metadata_file, "'. Error: ", e$message, sep=""))
+})
+
+if (!exists("sample_data_limited") || is.null(sample_data_limited) || nrow(sample_data_limited) == 0) {
+  stop("DEBUG ERROR: 'sample_data_limited' object is empty or not created after loading metadata. Check file content.")
+}
+message(paste("Metadata loaded successfully. Dimensions:", nrow(sample_data_limited), "rows,", ncol(sample_data_limited), "columns."))
+message("DEBUG: First few rows of 'sample_data_limited':")
+print(head(sample_data_limited, 3))
+
+
+# --- DEBUGGING POINT: Check metadata_variable_names creation ---
+message("--- Debugging 'metadata_variable_names' creation ---")
+if (!"Sample" %in% names(sample_data_limited)) {
+  stop("DEBUG ERROR: 'Sample' column not found in 'sample_data_limited'. Renaming 'ID' to 'Sample' might have failed.")
+}
+
+metadata_variable_names <- names(sample_data_limited) %>%
+  setdiff("Sample") # Exclude the ID column
+
+if (!exists("metadata_variable_names") || length(metadata_variable_names) == 0) {
+  stop("DEBUG ERROR: 'metadata_variable_names' object is empty or not created. Check 'sample_data_limited' column names.")
+}
+message("DEBUG: 'metadata_variable_names' created successfully.")
+message("DEBUG: Metadata variable names found: ")
+print(metadata_variable_names)
+message("--- End Debugging 'metadata_variable_names' creation ---")
+
+
+# ---- Load and clean spectra ----
+message("Loading and cleaning spectra files...")
+read_clean_spectrum <- function(file_path, sample_id) {
+  tryCatch({
+    read_csv(
+      file = file_path,
+      skip = 1, # Skip metadata row
+      col_names = TRUE,
+      show_col_types = FALSE
+    ) %>%
+      rename(Wavenumber = 1, Absorbance = 2) %>%
+      mutate(Sample = sample_id)
+  }, error = function(e) {
+    stop(paste("DEBUG ERROR: Failed to load or process spectrum file '", file_path, "'. Error: ", e$message, sep=""))
+  })
+}
+spectra_list <- map2(sample_files, sample_ids, read_clean_spectrum)
+standard_spectrum <- read_clean_spectrum(standard_file, "standard")
+message("All individual spectra loaded.")
+
+# Combine sample and standard spectra into a single long format dataframe
+all_spectra_long <- bind_rows(spectra_list) %>%
+  bind_rows(standard_spectrum)
+if (nrow(all_spectra_long) == 0) {
+  stop("DEBUG ERROR: 'all_spectra_long' is empty after combining spectra. Check individual spectrum files for data.")
+}
+message("All spectra combined to long format. Total rows:", nrow(all_spectra_long))
+
+# ---- Transpose spectral data (Wavenumber as rows, Sample as columns for intermediate) ----
+message("Transposing spectral data to Wavenumber as rows, Sample as columns...")
+transposed_spectra <- all_spectra_long %>%
+  pivot_wider(names_from = Sample, values_from = Absorbance) %>%
+  rename(Variable = Wavenumber) %>%
+  mutate(Variable = as.character(Variable)) %>%
+  mutate(across(-Variable, as.character)) # Convert sample value columns to character
+if (nrow(transposed_spectra) == 0) {
+  stop("DEBUG ERROR: 'transposed_spectra' is empty after pivoting. Check 'all_spectra_long' or pivot operation.")
+}
+message("Spectral data transposed. Dimensions:", nrow(transposed_spectra), "rows,", ncol(transposed_spectra), "columns.")
+
+# ---- Prepare dummy metadata for standard ----
+dummy_metadata <- tibble(Sample = "standard")
+missing_cols <- setdiff(names(sample_data_limited), names(dummy_metadata))
+for (col in missing_cols) {
+  dummy_metadata[[col]] <- "standard"
+}
+dummy_metadata <- dummy_metadata %>% select(names(sample_data_limited)) # ensure column order
+
+# Combine sample metadata and standard dummy metadata
+metadata_combined <- bind_rows(sample_data_limited, dummy_metadata)
+message("Metadata (including dummy for standard) combined. Dimensions:", nrow(metadata_combined), "rows,", ncol(metadata_combined), "columns.")
+
+# Transform metadata to a long format suitable for binding as rows (for final_combined_data)
+metadata_for_binding <- metadata_combined %>%
+  pivot_longer(
+    cols = -Sample,
+    names_to = "Variable",
+    values_to = "Value"
+  ) %>%
+  pivot_wider(names_from = Sample, values_from = Value) %>%
+  select(Variable, everything())
+if (nrow(metadata_for_binding) == 0) {
+  stop("DEBUG ERROR: 'metadata_for_binding' is empty after pivoting. Check 'metadata_combined'.")
+}
+message("Metadata transformed for row-wise binding. Dimensions:", nrow(metadata_for_binding), "rows,", ncol(metadata_for_binding), "columns.")
+
+
+# ---- Combine metadata as rows on top of transposed spectra (final_combined_data) ----
+final_combined_data <- bind_rows(metadata_for_binding, transposed_spectra)
+if (nrow(final_combined_data) == 0) {
+  stop("DEBUG ERROR: 'final_combined_data' is empty after row-binding. Check 'metadata_for_binding' and 'transposed_spectra'.")
+}
+message(paste("Final combined data (with metadata as rows on top of spectra) generated successfully. Dimensions:", nrow(final_combined_data), "rows,", ncol(final_combined_data), "columns."))
+
+
+# -------------------------------------------------------------------------
+# --- DEBUGGING SECTION FOR 'spectral_rows' ERROR ---
+# -------------------------------------------------------------------------
+message("--- Starting debug checks for spectral_rows creation ---")
+
+if (!exists("final_combined_data")) {
+  stop("DEBUG ERROR: 'final_combined_data' object does not exist after combining step. This is a critical error.")
+} else {
+  message(paste("DEBUG: 'final_combined_data' exists. Dimensions:", nrow(final_combined_data), "rows,", ncol(final_combined_data), "columns."))
+  message("DEBUG: First 5 rows of final_combined_data:")
+  print(head(final_combined_data, 5))
+  message("DEBUG: Structure of 'final_combined_data' (first few columns):")
+  print(str(final_combined_data[, 1:min(ncol(final_combined_data), 5)])) # Print str of first 5 columns or fewer if less than 5
+}
+
+if (!"Variable" %in% names(final_combined_data)) {
+  stop("DEBUG ERROR: 'final_combined_data' does not contain a 'Variable' column. This is required for filtering.")
+} else {
+  message("DEBUG: 'Variable' column found in 'final_combined_data'. First few unique values:")
+  print(head(unique(final_combined_data$Variable), 10))
+  message(paste("DEBUG: Data type of 'Variable' column:", class(final_combined_data$Variable)))
+}
+
+# Ensure metadata_variable_names is not empty
+if (length(metadata_variable_names) == 0) {
+  stop("DEBUG ERROR: 'metadata_variable_names' is empty. This means no metadata columns were identified in 'sample_data_limited' besides 'Sample'.")
+}
+message("DEBUG: Original metadata variable names (for filtering):")
+print(metadata_variable_names)
+message(paste("DEBUG: Data type of 'metadata_variable_names':", class(metadata_variable_names)))
+
+
+# --- 1. Separate Data and Metadata (from final_combined_data) ---
+# Now, re-attempting the separation with debug info
+message("Attempting to separate metadata_rows and spectral_rows...")
+metadata_rows <- final_combined_data %>%
+  filter(Variable %in% metadata_variable_names)
+
+spectral_rows <- final_combined_data %>%
+  filter(!Variable %in% metadata_variable_names)
+
+if (!exists("spectral_rows") || nrow(spectral_rows) == 0) {
+  stop("DEBUG ERROR: 'spectral_rows' was still not created or is empty. Filter condition or upstream issue. Check if wavenumbers are NOT matching metadata names.")
+} else {
+  message(paste("DEBUG: 'spectral_rows' created. Dimensions:", nrow(spectral_rows), "rows,", ncol(spectral_rows), "columns."))
+  message("DEBUG: First 5 rows of spectral_rows (should be wavenumbers):")
+  print(head(spectral_rows, 5))
+}
+
+if (!exists("metadata_rows") || nrow(metadata_rows) == 0) {
+  stop("DEBUG ERROR: 'metadata_rows' was still not created or is empty. Filter condition or upstream issue. Check if metadata names are NOT matching wavenumbers.")
+} else {
+  message(paste("DEBUG: 'metadata_rows' created. Dimensions:", nrow(metadata_rows), "rows,", ncol(metadata_rows), "columns."))
+  message("DEBUG: First 5 rows of metadata_rows (should be metadata variables):")
+  print(head(metadata_rows, 5))
+}
+message("--- Debug checks for spectral_rows creation complete ---")
+
+# -------------------------------------------------------------------------
+# --- END DEBUGGING SECTION ---
+# -------------------------------------------------------------------------
+
+
+# --- NEW SECTION: Prepare and Save Files for MetaboAnalyst Web Input ---
+# -------------------------------------------------------------------------
+
+# Re-transpose spectral_rows for MetaboAnalyst format (Samples as Rows, Wavenumbers as Columns)
+# (Ensure absorbance values are numeric here as they will be for analysis)
+message("Preparing spectral data for MetaboAnalyst input format (Samples as rows, Wavenumbers as columns)...")
+spectral_data_for_metaboanalyst <- spectral_rows %>%
+  mutate(across(-Variable, as.numeric)) %>% # Ensure numeric values for analysis
+  pivot_longer(
+    cols = -Variable,
+    names_to = "Sample",
+    values_to = "Absorbance"
+  ) %>%
+  pivot_wider(
+    names_from = Variable,
+    values_from = Absorbance
+  ) %>%
+  select(Sample, everything()) # Ensure Sample is the first column
+if (nrow(spectral_data_for_metaboanalyst) == 0) {
+  stop("DEBUG ERROR: 'spectral_data_for_metaboanalyst' is empty. Check previous spectral processing.")
+}
+message("Spectral data prepared for MetaboAnalyst input. Dimensions:", nrow(spectral_data_for_metaboanalyst), "rows,", ncol(spectral_data_for_metaboanalyst), "columns.")
+
+
+# Reconstruct the full metadata table into sample-centric format
+message("Reconstructing full metadata table for MetaboAnalyst...")
+metadata_table_for_metaboanalyst <- metadata_rows %>%
+  pivot_longer(
+    cols = -Variable,
+    names_to = "Sample",
+    values_to = "Value"
+  ) %>%
+  pivot_wider(
+    names_from = Variable,
+    values_from = Value
+  ) %>%
+  select(Sample, everything()) # Ensure Sample is first column
+if (nrow(metadata_table_for_metaboanalyst) == 0) {
+  stop("DEBUG ERROR: 'metadata_table_for_metaboanalyst' is empty. Check previous metadata processing.")
+}
+message("Full metadata table reconstructed. Dimensions:", nrow(metadata_table_for_metaboanalyst), "rows,", ncol(metadata_table_for_metaboanalyst), "columns.")
+
+# --- Define the Primary Grouping Variable ---
+# !!! IMPORTANT: CUSTOMIZE THIS !!!
+# Replace 'Type' with the actual column name from your sample_data_limited
+# that you want to use as your main experimental group (e.g., 'Treatment', 'Batch', 'Condition').
+primary_group_column_name <- "Type" # <<<--- !!! CUSTOMIZE THIS !!! ---<<<
+
+# --- Create the Main MetaboAnalyst Input File (`metaboanalyst_main_input_data.csv`) ---
+# This file will have Sample ID, Primary Group, then other metadata, then Wavenumbers.
+# We ensure the primary group is explicitly the second column.
+message("Creating main MetaboAnalyst input data file...")
+if (primary_group_column_name %in% names(metadata_table_for_metaboanalyst)) {
+  metaboanalyst_main_input_data <- metadata_table_for_metaboanalyst %>%
+    rename(Group = !!sym(primary_group_column_name)) %>%
+    # Ensure Group is the second column
+    select(Sample, Group, everything()) %>%
+    left_join(spectral_data_for_metaboanalyst, by = "Sample")
+} else {
+  message(paste0("Warning: Primary grouping variable '", primary_group_column_name, "' not found in metadata. Creating a dummy 'Group' for MetaboAnalyst main input."))
+  metaboanalyst_main_input_data <- metadata_table_for_metaboanalyst %>%
+    mutate(Group = ifelse(Sample == "standard", "standard", "sample_group")) %>%
+    select(Sample, Group, everything()) %>%
+    left_join(spectral_data_for_metaboanalyst, by = "Sample")
+}
+if (nrow(metaboanalyst_main_input_data) == 0) {
+  stop("DEBUG ERROR: 'metaboanalyst_main_input_data' is empty. Check join operation or input data.")
+}
+message("Main MetaboAnalyst input data file created. Dimensions:", nrow(metaboanalyst_main_input_data), "rows,", ncol(metaboanalyst_main_input_data), "columns.")
+
+
+# --- Create the Separate Secondary Metadata File (`metaboanalyst_secondary_metadata.csv`) ---
+# This file will contain Sample ID and all other metadata columns
+# (including the primary group if it was part of the original metadata, for completeness)
+message("Creating secondary metadata file...")
+secondary_metadata_for_metaboanalyst <- metadata_table_for_metaboanalyst %>%
+  select(Sample, everything()) # Ensure Sample is the first column
+if (nrow(secondary_metadata_for_metaboanalyst) == 0) {
+  stop("DEBUG ERROR: 'secondary_metadata_for_metaboanalyst' is empty. Check 'metadata_table_for_metaboanalyst'.")
+}
+message("Secondary metadata file created. Dimensions:", nrow(secondary_metadata_for_metaboanalyst), "rows,", ncol(secondary_metadata_for_metaboanalyst), "columns.")
+
+
+# --- 5. Save the prepared files to the data_dir ---
+# Define file names
+main_input_filename <- "metaboanalyst_main_input_data.csv"
+secondary_metadata_filename <- "metaboanalyst_secondary_metadata.csv"
+
+# Construct full paths
+main_input_path <- file.path(data_dir, main_input_filename)
+secondary_metadata_path <- file.path(data_dir, secondary_metadata_filename)
+
+# Save files
+message(paste("Saving main MetaboAnalyst input data to:", main_input_path))
+write.csv(metaboanalyst_main_input_data, main_input_path, row.names = FALSE)
+message(paste("Saving secondary metadata file to:", secondary_metadata_path))
+write.csv(secondary_metadata_for_metaboanalyst, secondary_metadata_path, row.names = FALSE)
+
+message("All MetaboAnalyst input files saved successfully.")
+
+# You can inspect the first few rows of the main input file:
+# print(head(metaboanalyst_main_input_data[, 1:min(10, ncol(metaboanalyst_main_input_data))])) # Print first 10 columns
+# print(head(secondary_metadata_for_metaboanalyst))
+```
+```{r}
+#Install MetaboAnalyst
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+if (!requireNamespace("BiocManager", quietly = TRUE)) {
+    install.packages("BiocManager")
+}
+BiocManager::install("MetaboAnalystR", ask = FALSE)
+library(MetaboAnalystR)
+#
+# Ensure MetaboAnalystR is installed and loaded
+# if (!requireNamespace("BiocManager", quietly = TRUE))
+#     install.packages("BiocManager")
+# BiocManager::install("MetaboAnalystR") # Uncomment to install if needed
+
+
+# Assuming 'final_combined_data' from the previous successful run is available in your environment.
+
+# --- 1. Separate Data and Metadata ---
+# Identify which rows are metadata and which are spectral data
+# We'll assume metadata rows are those where 'Variable' is NOT a numeric wavenumber.
+# This assumes your wavenumbers, even if converted to character, are still numeric-like.
+
+# First, let's get the original metadata variable names from your sample_data_limited
+# This assumes 'Sample' is the ID column and others are metadata variables.
+metadata_variable_names <- names(sample_data_limited) %>%
+  setdiff("Sample") # Exclude the ID column
+
+# Separate metadata rows and spectral rows
+metadata_rows <- final_combined_data %>%
+  filter(Variable %in% metadata_variable_names)
+
+spectral_rows <- final_combined_data %>%
+  filter(!Variable %in% metadata_variable_names)
+
+# --- 2. Transpose Spectral Data for MetaboAnalystR (Samples as Rows, Wavenumbers as Columns) ---
+# The 'spectral_rows' currently has Variable (wavenumber) as rows and samples as columns.
+# We need to reverse this for MetaboAnalystR.
+
+# Convert absorbance values back to numeric for analysis
+spectral_data_numeric <- spectral_rows %>%
+  mutate(across(-Variable, as.numeric)) # Convert sample columns back to numeric
+
+# Pivot to the desired format: Samples as rows, Wavenumbers as columns
+# 'Variable' (wavenumber) will become the new column names.
+# Values will be the absorbance.
+# We need to keep 'Sample' as an implicit identifier, or handle it as a column.
+# Let's pivot longer first to get 'Sample' as a column, then pivot wider.
+spectral_metaboanalyst_format <- spectral_data_numeric %>%
+  pivot_longer(
+    cols = -Variable,
+    names_to = "Sample",
+    values_to = "Absorbance"
+  ) %>%
+  pivot_wider(
+    names_from = Variable,
+    values_from = Absorbance
+  ) %>%
+  # Make Sample the first column
+  select(Sample, everything())
+
+# --- 3. Prepare Metadata for MetaboAnalystR ---
+# The metadata_rows contain the variables spread out. We need them back in a standard table.
+# This needs to be done carefully to reconstruct the original metadata table structure.
+# Let's reconstruct the sample_data_limited and dummy_metadata,
+# then ensure 'Sample' is the ID column and add a 'Group' for PLS-DA.
+
+# Reconstruct sample_data_limited and dummy_metadata, then add a group variable.
+# Assuming you have a 'Group' or 'Class' variable in your original 'sample_data_limited'
+# If not, you'll need to define one or pick an existing categorical variable.
+# For demonstration, let's assume 'Type' is your grouping variable.
+# If you don't have 'Type', replace it with one of your actual categorical variables.
+
+# First, let's re-gather the metadata_rows back into the original sample-centric format
+# This is essentially reversing the pivot_longer and pivot_wider steps we did for metadata_for_binding
+metadata_reformatted <- metadata_rows %>%
+  pivot_longer(
+    cols = -Variable,
+    names_to = "Sample",
+    values_to = "Value"
+  ) %>%
+  pivot_wider(
+    names_from = Variable,
+    values_from = Value
+  ) %>%
+  # Ensure 'Sample' is the first column for MetaboAnalystR
+  select(Sample, everything())
+
+# Now, we need a 'Group' column for PLS-DA. Let's assume 'Type' is a categorical variable in your metadata.
+# If 'Type' is not present, choose another suitable categorical variable from your metadata_variable_names
+# or define a new one based on your experimental design.
+# For example, if you have 'Batch' or 'Treatment' etc.
+
+# Let's use 'Type' as the grouping variable. If 'Type' doesn't exist, create a dummy one
+# or adjust based on your actual metadata.
+if (!"Type" %in% names(metadata_reformatted)) {
+  message("No 'Type' column found in metadata. Creating a dummy 'Group' based on 'Sample' prefix.")
+  # Example: If sample IDs are like "Lab_01", "Lab_02", "standard"
+  metadata_reformatted <- metadata_reformatted %>%
+    mutate(Group = ifelse(Sample == "standard", "standard",
+                          ifelse(grepl("Lab_0", Sample), "sample", "unknown")))
+} else {
+  metadata_reformatted <- metadata_reformatted %>%
+    rename(Group = Type) # Rename your chosen categorical variable to 'Group' for MetaboAnalystR
+}
+
+
+# Ensure Sample and Group are present and in the correct order for MetaboAnalystR
+# MetaboAnalystR generally expects the first column to be Sample ID and the second to be Group.
+metaboanalyst_metadata <- metadata_reformatted %>%
+  select(Sample, Group, everything())
+
+
+# --- 4. Combine Spectral Data with Group Information for MetaboAnalystR Input ---
+# Left join spectral data with group information.
+# This is the final input table for MetaboAnalystR.
+metaboanalyst_input_data <- left_join(
+  metaboanalyst_metadata,
+  spectral_metaboanalyst_format,
+  by = "Sample"
+) %>%
+  # MetaboAnalystR sometimes expects numeric group codes if not factors, but it can handle factors
+  mutate(Group = as.factor(Group))
+
+
+# Remove 'Sample' column as MetaboAnalystR's Read.TextData will use the first column (Group)
+# as class information and the rest as features, or expect Sample ID as the first column.
+# Let's create the final format: SampleID, Group, Wavenumber1, Wavenumber2...
+# If your sample IDs are unique and informative, keep them.
+# The `Read.TextData` function often expects Sample ID as the first column, then Group.
+# So, the `metaboanalyst_input_data` as constructed above is likely correct.
+
+# IMPORTANT: MetaboAnalystR's `Read.TextData` expects the first column to be sample names/IDs,
+# and the second column to be the class label.
+# So, the 'Sample' column should be the very first. Our `metaboanalyst_input_data` already
+# has `Sample` as the first, and `Group` as the second. This is correct.
+
+# --- 5. MetaboAnalystR Setup and PLS-DA Analysis ---
+
+# Initialize MetaboAnalystR session
+mSet <- InitDataObjects("conc", "pls", FALSE) # "conc" for concentration data, "pls" for PLS-DA, FALSE for paired
+
+# Load data (MetaboAnalystR expects a data frame where samples are rows, vars are columns)
+# The first column should be Sample ID, second column is Group.
+mSet <- Read.TextData(mSet, "uploaded_data.csv", "rowu", "disc")
+# To use `metaboanalyst_input_data` directly, we need to save it as a CSV first.
+write.csv(metaboanalyst_input_data, "uploaded_data.csv", row.names = FALSE)
+mSet <- Read.TextData(mSet, "uploaded_data.csv", "rowu", "disc") # rowu: samples in rows, distinct: discrete class labels
+
+# Data processing steps (Normalization, Scaling)
+# You want wavelength normalization, but minimal scaling.
+# MetaboAnalystR's 'NormalizeData' has options. 'AutoNorm' is often default.
+# For "wavelength normalization" in FTIR context, it often refers to
+# either min-max, sum, or specific band normalization.
+# MetaboAnalystR offers various normalization methods.
+
+# Let's apply a 'Sum' normalization to account for differences in path length/concentration,
+# which is common for FTIR "wavelength normalization" in a broad sense.
+# For scaling, we'll choose 'None' to minimize changes.
+# If you don't want any normalization either, choose "NoNorm" for the first arg.
+
+# Normalization: "Sum" (Total sum) for spectrum intensity normalization
+# Scaling: "None" (No scaling) as requested to keep data as raw as reasonable.
+# There's also "NoNorm" as the first argument if you truly want no normalization at all.
+# 'AutoNorm' is default and applies 'auto' scaling by default, which is not what you want.
+
+# If you specifically want to normalize by the sum of absorbances for each spectrum:
+mSet <- NormalizeData(mSet, "SumNorm", "None", "LogNorm", "Median", ratio = FALSE)
+# "SumNorm" - normalize by total sum of spectra
+# "None" - no scaling
+# "LogNorm" - (optional) log transformation if data spans many orders of magnitude
+# "Median" - (optional) for sample normalization if you had replicates. 'Median' or 'Mean'
+
+# If "SumNorm" isn't what you mean by "wavelength normalization" in your FTIR context,
+# you might consider 'NoNorm' or clarify what specific "wavelength normalization" method you prefer.
+# "NoNorm" for both will mean no pre-processing by MetaboAnalystR.
+# mSet <- NormalizeData(mSet, "NoNorm", "None", "LogNorm", "Median", ratio=FALSE) # Example for no norm/scale
+
+# Data transformation (optional, based on distribution)
+# mSet <- TransformData(mSet, "LogNorm", "AutoNorm") # Log transformation and Auto scaling
+
+# Perform PCA (for general overview, not for VIP scores)
+mSet <- PCA.Anal(mSet)
+mSet <- PlotPCAPairSummary(mSet, "pca_pair_summary_0_", "png", 72, 9)
+mSet <- PlotPCA2DScore(mSet, "pca_score_0_", "png", 72, 9, 1, 2, 0.95) # 2D score plot
+mSet <- PlotPCA3DScore(mSet, "pca_score3d_0_", "json", 72, 9, 1, 2, 3) # 3D score plot
+mSet <- PlotPCALoading(mSet, "pca_loading_0_", "png", 72, 9) # PCA loadings
+
+# Perform PLS-DA (for VIP scores)
+mSet <- PLSDA.Anal(mSet, reg = 1) # reg=1 for default R-package based PLS-DA
+
+# Optimize the PLS-DA model (if you have multiple groups or want to find best components)
+# This step is crucial for getting robust VIP scores and class separation.
+mSet <- PLSDA.CV(mSet, "LMCV", 5) # LMCV: Leave-More-Out Cross-Validation, 5 folds
+mSet <- PlotPLSDA.CV(mSet, "plsda_cv_0_", "png", 72, 9)
+
+# Generate PLS-DA score plot
+mSet <- PlotPLSDA2DScore(mSet, "plsda_score2d_0_", "png", 72, 9, 1, 2, 0.95)
+mSet <- PlotPLSDA3DScore(mSet, "plsda_score3d_0_", "json", 72, 9, 1, 2, 3)
+
+# --- 6. Extract VIP Scores ---
+# VIP scores are stored in mSet$analSet$plsda$vip.mat
+vip_scores <- mSet$analSet$plsda$vip.mat
+
+# Convert to data frame for easier manipulation and sorting
+vip_df <- as.data.frame(vip_scores)
+vip_df$Wavenumber <- rownames(vip_df)
+rownames(vip_df) <- NULL # Remove row names if they were the wavenumbers
+
+# Sort by VIP score (e.g., for the first component if there are multiple)
+# PLS-DA usually has multiple components. VIP scores can be calculated for each component
+# or as an average/max across components. MetaboAnalystR's 'vip.mat' often gives it for
+# the optimal number of components.
+# Let's sort by the VIP score for the first component or the one reported by default.
+# The column name in vip.mat might be 'VIP'. If not, check its structure.
+if("VIP" %in% names(vip_df)){
+  vip_df_sorted <- vip_df %>%
+    arrange(desc(VIP))
+} else {
+  # If 'VIP' column isn't directly available, it might be named by component (e.g., 'Comp.1')
+  # Let's find the first column that isn't 'Wavenumber' and assume it's the VIP score.
+  vip_col_name <- names(vip_df)[!names(vip_df) %in% c("Wavenumber")][1]
+  if(!is.na(vip_col_name)){
+    vip_df_sorted <- vip_df %>%
+      arrange(desc(.data[[vip_col_name]])) # Use .data[[]] for dynamic column name
+    message(paste("Sorted VIP scores by column:", vip_col_name))
+  } else {
+    message("Could not find a suitable VIP score column to sort by. Displaying raw VIP matrix.")
+    vip_df_sorted <- vip_df
+  }
+}
+
+print("Top VIP Scores:")
+print(head(vip_df_sorted))
+
+# Optionally, plot VIP scores (e.g., top N)
+# You might need to install 'forcats' if you haven't.
+# install.packages("forcats")
+library(forcats)
+
+# Plot top 20 VIP scores (adjust as needed)
+vip_plot_data <- vip_df_sorted %>%
+  slice_head(n = 20) %>%
+  mutate(Wavenumber = fct_reorder(Wavenumber, VIP)) # Reorder for plotting
+
+ggplot(vip_plot_data, aes(x = Wavenumber, y = VIP)) + # Assuming 'VIP' is the column name
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() + # Flip for better readability of wavenumber labels
+  labs(title = "Top 20 VIP Scores", x = "Wavenumber", y = "VIP Score") +
+  theme_minimal()
+
+# --- 7. Save results and plots ---
+# MetaboAnalystR typically saves plots and results in the working directory.
+# You can use Export.Results if needed, or check the working directory for generated files.
+# For example, to save the VIP scores to a CSV:
+write.csv(vip_df_sorted, "plsda_vip_scores.csv", row.names = FALSE)
+
+# Clean up MetaboAnalystR session
+# mSet <- Clear.Metabolomics.MetaboAnalystR(mSet) # Use this if you're done with the session
+
+
+
+```
+

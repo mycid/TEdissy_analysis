@@ -356,50 +356,50 @@ joindf_by_id <- function(df1,
                          df2,
                          key_df1,
                          key_df2,
-                         output_name     = NULL,
+                         assign_name     = NULL,
+                         save_csv_path   = NULL,
                          unmatched_out   = NULL) {
   
-  # Warn if "join_id" already exists
-  if ("join_id" %in% names(df1)) warning("'join_id' column in df1 will be overwritten.")
-  if ("join_id" %in% names(df2)) warning("'join_id' column in df2 will be overwritten.")
+  # ---- Step 1: Rename keys for joining
+  df1 <- df1 %>% select(-any_of("join_id")) %>% rename(join_id = all_of(key_df1))
+  df2 <- df2 %>% select(-any_of("join_id")) %>% rename(join_id = all_of(key_df2))
   
-  # Drop any existing 'join_id' column before renaming
-  df1 <- df1 %>% select(-any_of("join_id"))
-  df2 <- df2 %>% select(-any_of("join_id"))
+  # ---- Step 2: Join
+  joined <- full_join(df1, df2, by = "join_id")
   
-  # Rename ID columns to a common name for joining
-  df1_renamed <- df1 %>% rename(join_id = all_of(key_df1))
-  df2_renamed <- df2 %>% rename(join_id = all_of(key_df2))
-  
-  # Perform the join
-  joined <- full_join(df1_renamed, df2_renamed, by = "join_id")
-  
-  # Write final joined data if path is provided
-  if (!is.null(output_name)) {
-    write.csv(joined, output_name, row.names = FALSE)
+  # ---- Step 3: Save to CSV if needed
+  if (!is.null(save_csv_path)) {
+    write.csv(joined, save_csv_path, row.names = FALSE)
   }
   
-  # Identify and optionally save unmatched rows (e.g., missing from df2)
+  # ---- Step 4: Handle unmatched rows if needed
+  n_unmatched <- 0
   if (!is.null(unmatched_out)) {
-    df2_cols <- setdiff(names(df2_renamed), "join_id")
-    unmatched <- joined %>%
-      filter(if_any(all_of(df2_cols), ~ is.na(.x)))
+    df2_cols <- setdiff(names(df2), "join_id")
+    unmatched <- joined %>% filter(if_any(all_of(df2_cols), is.na))
+    n_unmatched <- nrow(unmatched)
     write.csv(unmatched, unmatched_out, row.names = FALSE)
   }
   
-  return(joined)
-
-   # Summary report
-  report <- list(
-    result_df = result,
-    merged_cells = sum(compare_ids %in% base_ids),
-    unmatched_cells = nrow(unmatched_df),
-    unmatched_saved_to = unmatched_out,
-    assigned_to_global = assign_to_global
-  )
+  # ---- Step 5: Auto-generate assign_name if not provided
+  if (is.null(assign_name)) {
+    name_df1 <- deparse(substitute(df1))
+    name_df2 <- deparse(substitute(df2))
+    assign_name <- paste0(name_df1, "_", name_df2, "_joined")
+  }
   
-  message("Join complete. Output saved to: ", output_name)
-  return(report)
+  # ---- Step 6: Assign and report
+  assign(assign_name, joined, envir = .GlobalEnv)
+  message("Assigned to global environment as: ", assign_name)
+  
+  print(list(
+    assigned_to = assign_name,
+    rows_total = nrow(joined),
+    columns_total = ncol(joined),
+    unmatched_rows = n_unmatched
+  ))
+  
+  return(joined)
 }
 #
 #
@@ -460,6 +460,12 @@ select_best_three <- function(df) {
 #
 #
 # Enhanced analyze_replicates: choose best three, and if exactly three replicates, choose best two
+# Load necessary libraries
+# You might need to run install.packages("dplyr") and install.packages("tidyr")
+library(dplyr)
+library(tidyr)
+
+# --- Main Analysis Function (Corrected) ---
 analyze_replicates <- function(data,
                                id_col = "ID",
                                join_col = "join_id",
@@ -467,7 +473,13 @@ analyze_replicates <- function(data,
                                date_col = "date",
                                output_prefix = "replicate_analysis",
                                choose_best_3 = FALSE,
-                               dir = "output PE/export data") {
+                               dir = "export") { # Changed default to a local folder
+  
+  # Ensure the output directory exists
+  if (!dir.exists(dir)) {
+    message("Output directory not found. Creating it now: ", dir)
+    dir.create(dir, recursive = TRUE)
+  }
   
   # Ensure proper types
   data[[id_col]] <- as.factor(data[[id_col]])
@@ -476,7 +488,7 @@ analyze_replicates <- function(data,
   # Identify numeric columns to analyze (exclude metadata)
   numeric_cols <- data %>%
     select(where(is.numeric)) %>%
-    select(-any_of(c(weight_col))) %>%  # exclude sample weight
+    select(-any_of(c(weight_col))) %>%
     colnames()
   
   # Pivot to long format for analysis
@@ -503,7 +515,7 @@ analyze_replicates <- function(data,
         keep_rows <- seq_len(n)
       }
       
-      # Ensure keep_rows is a simple integer vector (not matrix)
+      # Ensure keep_rows is a simple integer vector
       keep_rows <- as.vector(keep_rows)
       
       # Subset for stats
@@ -527,9 +539,9 @@ analyze_replicates <- function(data,
       
       # If using best selection, record included/excluded rows
       if (choose_best_3 && n >= 3) {
-        included_str <- paste(keep_rows, collapse = ",")
+        included_str <- paste(sort(keep_rows), collapse = ",")
         excluded <- setdiff(seq_len(n), keep_rows)
-        excluded_str <- if (length(excluded) == 0) NA_character_ else paste(excluded, collapse = ",")
+        excluded_str <- if (length(excluded) == 0) NA_character_ else paste(sort(excluded), collapse = ",")
         out <- out %>%
           mutate(included_rows = included_str,
                  excluded_rows = excluded_str)
@@ -573,22 +585,41 @@ analyze_replicates <- function(data,
   final_summary <- summary_wide %>%
     left_join(replicate_info, by = id_col)
   
-  # Write summary
-  summary_csv <- paste0(dir, output_prefix, "_summary.csv")
-  write.csv(final_summary, summary_csv, row.names = FALSE)
-  message("Summary saved to: ", summary_csv)
+  # --- FIX WAS HERE ---
+  # Write summary using file.path() for robust path creation
+  summary_csv <- file.path(dir, paste0(output_prefix, "_summary.csv"))
+  write.csv(final_summary, summary_csv, row.names = FALSE, na = "")
+  message("Success! Summary saved to: ", summary_csv)
   
   return(final_summary)
 }
 
+
+# --- Helper Functions ---
+
 # Helper: select_best_two (chooses the pair with smallest difference)
 select_best_two <- function(df) {
   vals <- df$value
+  # Find all combinations of 2 row indices
   pairs <- combn(seq_along(vals), 2)
+  # Calculate the absolute difference for each pair
   diffs <- apply(pairs, 2, function(idx) abs(vals[idx[1]] - vals[idx[2]]))
-  best_pair <- pairs[, which.min(diffs)]
-  list(included_rows = best_pair)
+  # Find the column index of the pair with the minimum difference
+  best_pair_indices <- pairs[, which.min(diffs)]
+  list(included_rows = best_pair_indices)
 }
+
+
+# Helper: select_best_three (chooses the three values closest to the mean)
+# NOTE: You can replace this logic with whatever "best three" means for your analysis.
+select_best_three <- function(df) {
+  vals <- df$value
+  mean_val <- mean(vals, na.rm = TRUE)
+  # Order rows by their absolute distance from the mean and take the first three
+  best_indices <- order(abs(vals - mean_val))[1:3]
+  list(included_rows = best_indices)
+}
+
 #
 #
 #

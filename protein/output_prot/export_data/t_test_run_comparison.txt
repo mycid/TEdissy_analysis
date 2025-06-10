@@ -1,0 +1,12 @@
+
+	Welch Two Sample t-test
+
+data:  Protein_mg_per_g by run
+t = 0.88986, df = 77.705, p-value = 0.3763
+alternative hypothesis: true difference in means between group 1 and group 2 is not equal to 0
+95 percent confidence interval:
+ -3.828439 10.016295
+sample estimates:
+mean in group 1 mean in group 2 
+       36.61258        33.51865 
+

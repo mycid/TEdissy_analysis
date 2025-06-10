@@ -100,9 +100,9 @@ The `joindf_by_id` function takes two data frames (`df1` and `df2`) and merges t
 # 1. Create output subdirectory
 # 1. Create subdirectory for joined weights inside data_dir
 joined_weights_dir <- file.path(data_dir, "joined_weights_prot")
-if (!dir_exists(joined_weights_dir)) dir_create(joined_weights_dir, recurse = TRUE)
+if (!dir.exists(joined_weights_dir)) dir.create(joined_weights_dir, recursive = TRUE)
 
-# 2. Build weight and PE data frame lists
+# 1. Build weight and PE data frame lists
 list_weights <- list(
   pr1_weights,
   pr2_weights
@@ -113,29 +113,29 @@ pr_list <- list(
   pr2 = pr2_tidy
 )
 
-# 3. Join + save using joindf_by_id and your output file paths
+# 2. Extract names to use in assign_name and filenames
+df_names <- names(pr_list)
+
+# 3. Join + save using joindf_by_id
 mapply(
   function(df1, df2, name) {
-    # Construct full file paths
-    joined_path   <- file.path(joined_weights_dir, paste0(name, "_weights_joined.csv"))
-    unmatched_path <- file.path(joined_weights_dir, paste0(name, "_weights_unmatched.csv"))
+    assign_name <- paste0(name, "_weights_joined")
+    csv_path    <- file.path(joined_weights_dir, paste0(assign_name, ".csv"))
     
-    # Call your existing function
     joindf_by_id(
-      df1           = df1,
-      df2           = df2,
-      output_name   = joined_path,
-      unmatched_out = unmatched_path,
-      key_df1       = "Cell_ID",
-      key_df2       = "plate well"
+      df1         = df1,
+      df2         = df2,
+      key_df1     = "Cell_ID",
+      key_df2     = "plate well",
+      assign_name = assign_name,
+      save_csv_path = csv_path
     )
   },
   df1 = pr_list,
   df2 = list_weights,
-  name = names(pr_list),
+  name = df_names,
   SIMPLIFY = FALSE
 )
-
 ```
 
 ## Create Standard Curve from Lowry Assay
@@ -183,118 +183,99 @@ print(prot_curve_plot)
 ## Calculate protein concentration with standard curve regression
 ```{r}
 # Use the regression model to predict concentration from absorbance
-# Rearranged formula: concentration = (absorbance - intercept) / slope
+export_dir <- "output_prot/export_data"
+plot_dir <- file.path("output_prot", "plots")
+dir.create(export_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(plot_dir, recursive = TRUE, showWarnings = FALSE)
+
+# ---- Step 1: Calibration
 intercept <- coef(model)[1]
 slope     <- coef(model)[2]
 
-
-# 1. Find common columns
+# ---- Step 2: Harmonize inputs
 common_cols <- intersect(names(pr2_weights_joined), names(pr1_weights_joined))
+pr1_weights_joined <- pr1_weights_joined %>% mutate(weights = as.numeric(weights), date = parse_date_time(date, orders = c("ymd", "dmy", "mdy")))
+pr2_weights_joined <- pr2_weights_joined %>% mutate(weights = as.numeric(weights), date = parse_date_time(date, orders = c("ymd", "dmy", "mdy")))
 
-# Force both weights columns to numeric
-pr1_weights_joined <- pr1_weights_joined %>% mutate(weights = as.numeric(weights))
-pr2_weights_joined <- pr2_weights_joined %>% mutate(weights = as.numeric(weights))
-# Fix the dates
-pr1_weights_joined <- pr1_weights_joined %>%
-  mutate(date = parse_date_time(date, orders = c("ymd", "dmy", "mdy")))
-
-pr2_weights_joined <- pr2_weights_joined %>%
-  mutate(date = parse_date_time(date, orders = c("ymd", "dmy", "mdy")))  # also force to Date with EU format
-# 2. Subset and bind
-
+# ---- Step 3: Combine datasets and calculate concentrations
 pr_combined <- bind_rows(pr2_weights_joined[common_cols], pr1_weights_joined[common_cols])
-
 pr_combined$con_mg_per_ml <- (pr_combined$X600 - intercept) / slope
-
-
-
-# ---- Step 4: Convert to total protein in extract (500 µL = 0.5 mL)
-# First, calculate protein in the well (20 µL = 0.02 mL), then scale
-pr_combined$Protein_mg_total <- pr_combined$con_mg_per_ml * 0.5  # total protein in extract
-
-# ---- Step 5: Convert to mg protein per g sample
+pr_combined$Protein_mg_total <- pr_combined$con_mg_per_ml * 0.5
 pr_combined$Protein_mg_per_g <- (pr_combined$Protein_mg_total / pr_combined$weights) * 1000
 
-## ---- Step 6: Filter out blanks and standards
-pr_combined <- pr_combined[is.finite(pr_combined$Protein_mg_per_g) & !is.na(pr_combined$Protein_mg_per_g), ]
-
-## ---- Create a factor for each run to allow testing for differences between the runs
+# ---- Step 4: Filter and factor runs
 pr_combined <- pr_combined %>%
+  filter(is.finite(Protein_mg_per_g), !is.na(Protein_mg_per_g)) %>%
   mutate(run = as.factor(match(as.Date(date), unique(as.Date(date)))))
 
-## ---- test for differences in the runs
-t.test(Protein_mg_per_g ~ run, data = pr_combined)
+# Save combined data
+write_csv(pr_combined, file.path(export_dir, "pr_combined.csv"))
 
-# OR Wilcoxon test (if data are not normally distributed)
-wilcox.test(Protein_mg_per_g ~ run, data = pr_combined)
+# ---- Step 5: Statistical tests
+t_test_result <- t.test(Protein_mg_per_g ~ run, data = pr_combined)
+wilcox_result <- wilcox.test(Protein_mg_per_g ~ run, data = pr_combined)
 
-# Visualize differences in box and whisker plot
-ggplot(pr_combined, aes(x = run, y = Protein_mg_per_g, fill = run)) +
-  geom_boxplot(outlier.shape = NA, width = 0.6) +  # boxplot without outliers
-  geom_jitter(width = 0.1, alpha = 0.5, color = "black") +  # add jittered points
-  labs(
-    title = "Protein Content by Run",
-    x = "Run",
-    y = "Protein (mg/g)"
-  ) +
+# Save test summaries
+capture.output(t_test_result,   file = file.path(export_dir, "t_test_run_comparison.txt"))
+capture.output(wilcox_result,  file = file.path(export_dir, "wilcox_test_run_comparison.txt"))
+
+# ---- Step 6: Plot protein content by run
+protein_run_plot <- ggplot(pr_combined, aes(x = run, y = Protein_mg_per_g, fill = run)) +
+  geom_boxplot(outlier.shape = NA, width = 0.6) +
+  geom_jitter(width = 0.1, alpha = 0.5, color = "black") +
+  labs(title = "Protein Content by Run", x = "Run", y = "Protein (mg/g)") +
   theme_minimal() +
-  theme(
-    legend.position = "none",
-    plot.title = element_text(hjust = 0.5)
-  )
-#
-# Identify outliers with IQR
-# Filter for just runs 1 and 2 (if needed)
-df_runs12 <- pr_combined %>% filter(run %in% c("1", "2"))
+  theme(legend.position = "none", plot.title = element_text(hjust = 0.5))
 
-# Calculate non-parametric bounds
+save_object(
+  object    = protein_run_plot,
+  filename  = "protein_content_by_run",
+  directory = "plots",
+  subdir    = "replicate_analysis/protein"
+)
+
+# ---- Step 7: Outlier detection
+df_runs12 <- pr_combined %>% filter(run %in% c("1", "2"))
 iqr_vals <- IQR(df_runs12$Protein_mg_per_g, na.rm = TRUE)
 q1 <- quantile(df_runs12$Protein_mg_per_g, 0.25, na.rm = TRUE)
 q3 <- quantile(df_runs12$Protein_mg_per_g, 0.75, na.rm = TRUE)
 lower_bound <- q1 - 1.5 * iqr_vals
 upper_bound <- q3 + 1.5 * iqr_vals
 
-# Add flag column to full dataframe
 pr_combined <- pr_combined %>%
   mutate(outlier_flag = ifelse(
     Protein_mg_per_g < lower_bound | Protein_mg_per_g > upper_bound,
     "outlier", "normal"
   ))
 
-pr_combined_clean <- pr_combined %>%
-  filter(outlier_flag == "normal")
-```
+# Save outlier-flagged data
+write_csv(pr_combined, file.path(export_dir, "pr_combined_with_outliers.csv"))
 
-## Analyze Replicates
-```{r}
+pr_combined_clean <- pr_combined %>% filter(outlier_flag == "normal")
+write_csv(pr_combined_clean, file.path(export_dir, "pr_combined_clean.csv"))
+
+# ---- Step 8: Replicate analysis
 analyze_replicates(
   data          = pr_combined_clean,
-  id_col        = "ID",         # column that uniquely identifies each sample
-  join_col      = "join_id",         # also used for joining, same as id_col here
-  weight_col    = "weights",   # column containing sample weight in grams
-  date_col      = "date",            # column containing sample collection date
-  output_prefix = "pr_rep",   # prefix for output files (will produce all_rep_analy_summary.csv)
-  choose_best_3 = TRUE, # do not filter replicates, use all
-  dir = "output_prot/export_data/"
+  id_col        = "ID",
+  join_col      = "join_id",
+  weight_col    = "weights",
+  date_col      = "date",
+  output_prefix = "pr_rep",
+  choose_best_3 = TRUE,
+  dir           = export_dir
 )
-#
-# 1. Define the variables to plot
-variables <- c("Protein_mg_g", "X600")
 
-# 1. Define output directory for protein replicate analysis
-protein_plot_dir <- file.path("output_prot", "plots", "replicate_analysis")
-dir.create(protein_plot_dir, recursive = TRUE, showWarnings = FALSE)
+# ---- Step 9: Replicate summary and plot
+protein_summary <- read_csv(file.path(export_dir, "pr_rep_summary.csv"))
 
-# 2. Read protein replicate summary data
-protein_summary <- read.csv("output_prot/export_data/pr_rep_summary.csv")
+protein_var     <- "Protein_mg_per_g"
+se_col_name     <- paste0(protein_var, "_se")
+mean_col_name   <- paste0(protein_var, "_mean")
 
-# 3. Define variable name
-protein_var <- "Protein_mg_per_g"
-se_col_name   <- paste0(protein_var, "_se")
-mean_col_name <- paste0(protein_var, "_mean")
-output_prefix <- file.path(protein_plot_dir, paste0(protein_var, "_replicate_analysis"))
+output_prefix <- file.path(plot_dir, "replicate_analysis", paste0(protein_var, "_replicate_analysis"))
+dir.create(dirname(output_prefix), recursive = TRUE, showWarnings = FALSE)
 
-# 4. Generate plot using custom error bar function
 protein_plot <- graph_replicates_custom_error(
   data          = protein_summary,
   id_col        = "ID",
@@ -303,25 +284,27 @@ protein_plot <- graph_replicates_custom_error(
   output_prefix = output_prefix
 )
 
-# 5. Save interactive plot using your custom save_object function
 save_object(
   object    = protein_plot,
-  filename  = paste0(protein_var, "_replicate_plot"),  # e.g. "Protein_replicate_plot"
+  filename  = paste0(protein_var, "_replicate_plot"),
   directory = "plots",
   format    = "html",
-  subdir    = "replicate_analysis/protein",  # This goes inside plot_dir
+  subdir    = "replicate_analysis/protein"
 )
 
-# 6. Display plot in HTML report
-protein_plot
-#
-protein_summary %>%
+# ---- Step 10: Summary stats
+summary_stats <- protein_summary %>%
   summarise(
-    total_rows      = n(),
-    high_cv_count   = sum(Protein_mg_per_g_cv > 0.2, na.rm = TRUE),
-    average_cv   = mean(Protein_mg_per_g_cv, na.rm = TRUE),
-    high_cv_percent = mean(Protein_mg_per_g_cv > 0.2, na.rm = TRUE) * 100
+    total_rows       = n(),
+    high_cv_count    = sum(Protein_mg_per_g_cv > 0.2, na.rm = TRUE),
+    average_cv       = mean(Protein_mg_per_g_cv, na.rm = TRUE),
+    high_cv_percent  = mean(Protein_mg_per_g_cv > 0.2, na.rm = TRUE) * 100
   )
+
+write_csv(summary_stats, file.path(export_dir, "protein_summary_stats.csv"))
+
+# Also print to console (optional)
+print(summary_stats)
 
 ```
 ## Analize protein content by sample
@@ -329,7 +312,7 @@ protein_summary %>%
 # 1. Merge enhanced replicate summary with metadata by column "ID"
 #    This will save "PErep_final.csv" and assign the merged data frame to `PErep_final`.
 # 1. Define export folder and create it if needed
-final_export_dir <- file.path("output PE", "export data", "Samples Analysis Final")
+final_export_dir <- file.path("output prot", "export data", "Samples Analysis Final")
 dir.create(final_export_dir, recursive = TRUE, showWarnings = FALSE)
 
 #
@@ -338,14 +321,14 @@ dir.create(final_export_dir, recursive = TRUE, showWarnings = FALSE)
 joindf_by_id(
   df1          = protein_summary,
   df2          = `Sample data`,
-  output_name  = file.path(final_export_dir, "pr_rep_final.csv"),
-  unmatched_out = file.path(final_export_dir, "Pr_rep_unmatched.csv"),
+  save_csv_path  = file.path(final_export_dir, "pr_rep_final.csv"),
+  assign_name  = "pr_rep_final",
   key_df1      = "ID",
   key_df2      = "ID"
 )
 
 # 4. Define output directory for replicate analysis plots
-rep_plot_dir <- file.path("output prot", "plots", "replicate_analysis")
+rep_plot_dir <- file.path("output_prot", "plots", "replicate_analysis")
 dir.create(rep_plot_dir, recursive = TRUE, showWarnings = FALSE)
 
 # 5. Generate histogram with error bars for PE_mg_per_g_sample_mean
