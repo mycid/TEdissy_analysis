@@ -2,10 +2,6 @@
 title: "PE diagnostics"
 author: "Trevor Eakes"
 date: "`r Sys.Date()`"
-params:
-  plot_dir:    "output_prot/plots"
-  data_dir:    "output_prot/export_data"
-  report_dir:  "output_prot/reports"
 output: html_document
 editor_options: 
   markdown: 
@@ -31,21 +27,15 @@ Below, we set up our working directory and load that script—**note:** since we
 # --------------------------------------------------------------------
 # SETUP CHUNK (not shown in HTML): load packages, set WD, define folders
 # --------------------------------------------------------------------
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+# Create "output PE/plots/" if it doesn’t exist
+plots_dir <- file.path("output PE", "plots")
+if (!dir.exists(plots_dir)) dir.create(plots_dir, recursive = TRUE)
+
 # Source script from top-level project folder
 source("../process_plate_run.R")
-#— 1. pull from params (or use defaults)
-plot_dir   <- params$plot_dir   %||% "output PE/plots"
-data_dir   <- params$data_dir   %||% "output PE/export data"
-report_dir <- params$report_dir %||% "output PE/reports"
-
-#— 2. create all dirs
-walk(
-  c(plot = plot_dir, data = data_dir, reports = report_dir),
-  ~ if (!dir_exists(.x)) dir_create(.x, recurse = TRUE)
-)
-
-#— 3. register plot_dir with knitr
-opts_chunk$set(fig.path = paste0(plot_dir, "/"))
+getwd()
 ```
 
 ## STEP 1: LOAD ALL INPUT EXCEL FILES
@@ -1200,14 +1190,16 @@ compare_groups(
   data         = PE_location_cham,
   response_var = "PE_mg_per_g_sample_mean",
   group_var    = "Location",
-  subfolder_name = "PE_Location_cham_A"
+  report_dir = "output PE/reports",
+  plot_dir   = "output PE/plots"
 )
 
 compare_groups(
-  data           = PE_location_cham,
-  response_var   = "PE_pred_run2_mg_per_g_mean",
-  group_var      = "Location",
-  subfolder_name = "PE_Location_cham_B"
+  data         = PE_location_cham,
+  response_var = "PE_pred_run2_mg_per_g_mean",
+  group_var    = "Location",
+  report_dir = "output PE/reports",
+  plot_dir   = "output PE/plots"
 )
 
 ################################################Life_S
@@ -1215,14 +1207,16 @@ compare_groups(
   data         = PE_location_cham,
   response_var = "PE_mg_per_g_sample_mean",
   group_var    = "Life_S",
-  subfolder_name = "PE_Life_S_cham_A"
+  report_dir = "output PE/reports",
+  plot_dir   = "output PE/plots"
 )
 
 compare_groups(
   data         = PE_location_cham,
   response_var = "PE_pred_run2_mg_per_g_mean",
   group_var    = "Life_S",
-  subfolder_name = "PE_Life_S_cham_B"
+  report_dir = "output PE/reports",
+  plot_dir   = "output PE/plots"
 )
 
 ###########################################Variety
@@ -1233,14 +1227,16 @@ compare_groups(
   data         = PE_paracas_marcona,
   response_var = "PE_mg_per_g_sample_mean",
   group_var    = "variety",
-  subfolder_name = "PE_variety_A"
+  report_dir = "output PE/reports",
+  plot_dir   = "output PE/plots"
 )
 
 compare_groups(
   data         = PE_location_cham,
   response_var = "PE_pred_run2_mg_per_g_mean",
   group_var    = "variety",
-  subfolder_name = "PE_variety_B"
+  report_dir = "output PE/reports",
+  plot_dir   = "output PE/plots"
 )
 
 #################################Preperation method
@@ -1252,14 +1248,16 @@ compare_groups(
   data         = PE_methods,
   response_var = "PE_mg_per_g_sample_mean",
   group_var    = "Location",
-  subfolder_name = "PE_method_A"
+  report_dir = "output PE/reports",
+  plot_dir   = "output PE/plots"
 )
 
 compare_groups(
   data         = PE_methods,
   response_var = "PE_pred_run2_mg_per_g_mean",
   group_var    = "Location",
-  subfolder_name = "PE_method_B"
+  report_dir = "output PE/reports",
+  plot_dir   = "output PE/plots"
 )
 
 #################################Gam Cham
@@ -1271,14 +1269,16 @@ compare_groups(
   data         = PE_gamtetra,
   response_var = "PE_mg_per_g_sample_mean",
   group_var    = "Location",
-  subfolder_name = "PE_gamtetra_location_A"
+  report_dir = "output PE/reports",
+  plot_dir   = "output PE/plots"
 )
 
 compare_groups(
   data         = PE_gamtetra,
   response_var = "PE_pred_run2_mg_per_g_mean",
   group_var    = "Location",
-  subfolder_name = "PE_gamtetra_location_A"
+  report_dir = "output PE/reports",
+  plot_dir   = "output PE/plots"
 )
 ```
 
