@@ -1,12 +1,46 @@
+
+
 # scripts/process_plate_run.R
 required_packages <- c(
-  "readxl", "dplyr", "tidyr", "tidyverse", "purrr", "zoo",
-  "ggplot2", "lubridate", "stringr", "tools", "plotly", 
-  "here", "broom", "easystats", "performance", "ggrepel", 
-  "effectsize", "rlang", "boot", "emmeans", "multcompView", "fs", "knitr")
-#
-#
-#
+  "readxl",
+  "dplyr",
+  "tidyr",
+  "tidyverse",
+  "purrr",
+  "zoo",
+  "ggplot2",
+  "lubridate",
+  "stringr",
+  "tools",
+  "plotly",
+  "ggplot2",
+  "ggpubr",
+  "lubridate",
+  "stringr",
+  "tools",
+  "plotly",
+  "here",
+  "broom",
+  "easystats",
+  "performance",
+  "ggrepel",
+  "effectsize",
+  "rlang",
+  "boot",
+  "emmeans",
+  "multcompView",
+  "fs",
+  "knitr",
+  "forcats",
+  "patchwork",
+  "grid",
+  "cowplot",
+  "factoextra",
+  "FactoMineR",
+  "gt",
+  "rstatix",
+  "PMCMRplus"
+)
 for(pkg in required_packages) {
   if (!requireNamespace(pkg, quietly = TRUE)) {
     install.packages(pkg)
@@ -262,9 +296,9 @@ correct_all <- function(df_list, blanks_list) {
 }
 
 
-  #
-  #
-  #
+#
+#
+#
 calculate_pe_and_filter <- function(tidy_df, 
                                     output_basename,                  # <- NEW: name for files and objects
                                     extract_volume_mL = 1.5, 
@@ -315,7 +349,7 @@ calculate_pe_and_filter <- function(tidy_df,
     message("No observations removed due to negative PE values.")
   }
   
-  # --- Step 3–4: Calculate total PE and PE per g sample ---
+  # --- Step 3???4: Calculate total PE and PE per g sample ---
   tidy_final <- tidy_df[-to_remove_pe, ] %>%
     mutate(
       total_PE_mg = PE_mg_per_mL * extract_volume_mL,
@@ -332,8 +366,6 @@ calculate_pe_and_filter <- function(tidy_df,
   attr(tidy_final, "removed_rows_pe") <- removed_rows
   return(tidy_final)
 }
-
-
 
 #
 #
@@ -359,7 +391,6 @@ joindf_by_id <- function(df1,
                          assign_name     = NULL,
                          save_csv_path   = NULL,
                          unmatched_out   = NULL) {
-  
   # ---- Step 1: Rename keys for joining
   df1 <- df1 %>% select(-any_of("join_id")) %>% rename(join_id = all_of(key_df1))
   df2 <- df2 %>% select(-any_of("join_id")) %>% rename(join_id = all_of(key_df2))
@@ -392,12 +423,14 @@ joindf_by_id <- function(df1,
   assign(assign_name, joined, envir = .GlobalEnv)
   message("Assigned to global environment as: ", assign_name)
   
-  print(list(
-    assigned_to = assign_name,
-    rows_total = nrow(joined),
-    columns_total = ncol(joined),
-    unmatched_rows = n_unmatched
-  ))
+  print(
+    list(
+      assigned_to = assign_name,
+      rows_total = nrow(joined),
+      columns_total = ncol(joined),
+      unmatched_rows = n_unmatched
+    )
+  )
   
   return(joined)
 }
@@ -422,10 +455,7 @@ select_best_three <- function(df) {
   
   # If 3 or fewer replicates, include all, exclude none (NA)
   if (n <= 3) {
-    return(list(
-      included_rows = rows,
-      excluded_rows = NA_character_
-    ))
+    return(list(included_rows = rows, excluded_rows = NA_character_))
   }
   
   # For more than 3, find best 3 replicates minimizing CV
@@ -434,7 +464,9 @@ select_best_three <- function(df) {
     vals <- df$value[idx]
     vals <- vals[!is.na(vals)]
     # Avoid division by zero or insufficient data
-    if (length(vals) < 3 || mean(vals, na.rm = TRUE) == 0) return(Inf)
+    if (length(vals) < 3 ||
+        mean(vals, na.rm = TRUE) == 0)
+      return(Inf)
     sd(vals, na.rm = TRUE) / mean(vals, na.rm = TRUE)
   })
   
@@ -442,10 +474,7 @@ select_best_three <- function(df) {
   best_rows <- combos[, best_idx]
   excluded_rows <- setdiff(rows, best_rows)
   
-  return(list(
-    included_rows = best_rows,
-    excluded_rows = excluded_rows
-  ))
+  return(list(included_rows = best_rows, excluded_rows = excluded_rows))
 }
 #
 #
@@ -458,144 +487,6 @@ select_best_three <- function(df) {
 #
 #
 #
-#
-# Enhanced analyze_replicates: choose best three, and if exactly three replicates, choose best two
-# Load necessary libraries
-# You might need to run install.packages("dplyr") and install.packages("tidyr")
-library(dplyr)
-library(tidyr)
-
-# --- Main Analysis Function (Corrected) ---
-analyze_replicates <- function(data,
-                               id_col = "ID",
-                               join_col = "join_id",
-                               weight_col = "sample weight",
-                               date_col = "date",
-                               output_prefix = "replicate_analysis",
-                               choose_best_3 = FALSE,
-                               dir = "export") { # Changed default to a local folder
-  
-  # Ensure the output directory exists
-  if (!dir.exists(dir)) {
-    message("Output directory not found. Creating it now: ", dir)
-    dir.create(dir, recursive = TRUE)
-  }
-  
-  # Ensure proper types
-  data[[id_col]] <- as.factor(data[[id_col]])
-  data[[date_col]] <- as.Date(data[[date_col]])
-  
-  # Identify numeric columns to analyze (exclude metadata)
-  numeric_cols <- data %>%
-    select(where(is.numeric)) %>%
-    select(-any_of(c(weight_col))) %>%
-    colnames()
-  
-  # Pivot to long format for analysis
-  long_data <- data %>%
-    pivot_longer(cols = all_of(numeric_cols), names_to = "measure", values_to = "value")
-  
-  # Summary stats with best selection if enabled
-  summary_long <- long_data %>%
-    group_by(.data[[id_col]], measure) %>%
-    group_modify(~ {
-      df_sub <- .x
-      n <- nrow(df_sub)
-      
-      if (choose_best_3 && n > 3) {
-        # More than three: select best three
-        selected <- select_best_three(df_sub)
-        keep_rows <- selected$included_rows
-      } else if (choose_best_3 && n == 3) {
-        # Exactly three: select best two
-        selected <- select_best_two(df_sub)
-        keep_rows <- selected$included_rows
-      } else {
-        # Default: keep all
-        keep_rows <- seq_len(n)
-      }
-      
-      # Ensure keep_rows is a simple integer vector
-      keep_rows <- as.vector(keep_rows)
-      
-      # Subset for stats
-      df_best <- df_sub[keep_rows, , drop = FALSE]
-      m <- nrow(df_best)
-      mean_val <- mean(df_best$value, na.rm = TRUE)
-      sd_val <- sd(df_best$value, na.rm = TRUE)
-      se_val <- sd_val / sqrt(m)
-      cv_val <- sd_val / mean_val
-      max_dev_pct_val <- max(abs(df_best$value - mean_val) / mean_val * 100, na.rm = TRUE)
-      
-      # Build result tibble
-      out <- tibble(
-        n = m,
-        mean = mean_val,
-        sd = sd_val,
-        se = se_val,
-        cv = cv_val,
-        max_dev_pct = max_dev_pct_val
-      )
-      
-      # If using best selection, record included/excluded rows
-      if (choose_best_3 && n >= 3) {
-        included_str <- paste(sort(keep_rows), collapse = ",")
-        excluded <- setdiff(seq_len(n), keep_rows)
-        excluded_str <- if (length(excluded) == 0) NA_character_ else paste(sort(excluded), collapse = ",")
-        out <- out %>%
-          mutate(included_rows = included_str,
-                 excluded_rows = excluded_str)
-      }
-      
-      out
-    }) %>%
-    ungroup()
-  
-  # Pivot stats to wide format for readability
-  if (choose_best_3) {
-    summary_wide <- summary_long %>%
-      pivot_wider(
-        names_from = measure,
-        values_from = c(mean, sd, se, cv, max_dev_pct, n, included_rows, excluded_rows),
-        names_glue = "{measure}_{.value}"
-      )
-  } else {
-    summary_wide <- summary_long %>%
-      pivot_wider(
-        names_from = measure,
-        values_from = c(mean, sd, se, cv, max_dev_pct, n),
-        names_glue = "{measure}_{.value}"
-      )
-  }
-  
-  # Add join_id list, average sample weight, date, and replicate count
-  replicate_info <- data %>%
-    group_by(.data[[id_col]]) %>%
-    summarise(
-      join_ids = paste(unique(.data[[join_col]]), collapse = ", "),
-      avg_sample_weight = mean(.data[[weight_col]], na.rm = TRUE),
-      replicate_date = ifelse(length(unique(.data[[date_col]])) == 1,
-                              as.character(unique(.data[[date_col]])),
-                              paste0("Mixed (", paste(unique(.data[[date_col]]), collapse = "; "), ")")),
-      replicate_count = n(),
-      .groups = "drop"
-    )
-  
-  # Final output
-  final_summary <- summary_wide %>%
-    left_join(replicate_info, by = id_col)
-  
-  # --- FIX WAS HERE ---
-  # Write summary using file.path() for robust path creation
-  summary_csv <- file.path(dir, paste0(output_prefix, "_summary.csv"))
-  write.csv(final_summary, summary_csv, row.names = FALSE, na = "")
-  message("Success! Summary saved to: ", summary_csv)
-  
-  return(final_summary)
-}
-
-
-# --- Helper Functions ---
 
 # Helper: select_best_two (chooses the pair with smallest difference)
 select_best_two <- function(df) {
@@ -603,23 +494,12 @@ select_best_two <- function(df) {
   # Find all combinations of 2 row indices
   pairs <- combn(seq_along(vals), 2)
   # Calculate the absolute difference for each pair
-  diffs <- apply(pairs, 2, function(idx) abs(vals[idx[1]] - vals[idx[2]]))
+  diffs <- apply(pairs, 2, function(idx)
+    abs(vals[idx[1]] - vals[idx[2]]))
   # Find the column index of the pair with the minimum difference
   best_pair_indices <- pairs[, which.min(diffs)]
   list(included_rows = best_pair_indices)
 }
-
-
-# Helper: select_best_three (chooses the three values closest to the mean)
-# NOTE: You can replace this logic with whatever "best three" means for your analysis.
-select_best_three <- function(df) {
-  vals <- df$value
-  mean_val <- mean(vals, na.rm = TRUE)
-  # Order rows by their absolute distance from the mean and take the first three
-  best_indices <- order(abs(vals - mean_val))[1:3]
-  list(included_rows = best_indices)
-}
-
 #
 #
 #
@@ -630,10 +510,10 @@ select_best_three <- function(df) {
 #
 #
 #
-graph_replicates_custom_error <- function(data, 
-                                          id_col = "ID", 
-                                          value_col, 
-                                          se_col, 
+graph_replicates_custom_error <- function(data,
+                                          id_col = "ID",
+                                          value_col,
+                                          se_col,
                                           output_prefix = "replicate_analysis") {
   plot_dir <- paste0(output_prefix, "_plots")
   dir.create(plot_dir, showWarnings = FALSE)
@@ -642,19 +522,29 @@ graph_replicates_custom_error <- function(data,
   df_plot <- data %>%
     select(all_of(c(id_col, value_col, se_col))) %>%
     drop_na() %>%
-    rename(ID = !!sym(id_col),
-           value = !!sym(value_col),
-           se = !!sym(se_col))
+    rename(
+      ID = !!sym(id_col),
+      value = !!sym(value_col),
+      se = !!sym(se_col)
+    )
   
   # Create the plot
   p <- ggplot(df_plot, aes(x = ID, y = value)) +
     geom_col(fill = "steelblue", width = 0.6) +
-    geom_errorbar(aes(ymin = value - se, ymax = value + se), 
-                  width = 0.2, color = "black") +
-    labs(title = paste("Replicate Summary:", value_col),
-         x = id_col, y = value_col) +
+    geom_errorbar(aes(ymin = value - se, ymax = value + se),
+                  width = 0.2,
+                  color = "black") +
+    labs(
+      title = paste("Replicate Summary:", value_col),
+      x = id_col,
+      y = value_col
+    ) +
     theme_classic() +
-    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+    theme(axis.text.x = element_text(
+      angle = 90,
+      vjust = 0.5,
+      hjust = 1
+    )) +
     scale_y_continuous(expand = expansion(mult = c(0, 0.1)))
   
   # Save static plot
@@ -679,12 +569,10 @@ graph_replicates_custom_error <- function(data,
 #
 #
 #
-graph_histograms_with_error <- function(
-    data,
-    variables,
-    id_col = "ID",
-    output_prefix = "histogram_analysis"
-) {
+graph_histograms_with_error <- function(data,
+                                        variables,
+                                        id_col = "ID",
+                                        output_prefix = "histogram_analysis") {
   plot_dir <- paste0(output_prefix, "_plots")
   dir.create(plot_dir, showWarnings = FALSE)
   
@@ -706,18 +594,35 @@ graph_histograms_with_error <- function(
     # Create plot
     p <- ggplot(summary_df, aes_string(x = id_col, y = "mean_val")) +
       geom_col(fill = "steelblue", width = 0.6) +
-      geom_errorbar(aes(ymin = mean_val - se_val, ymax = mean_val + se_val),
-                    width = 0.1, color = "black") +
-      geom_jitter(data = data, aes_string(x = id_col, y = var),
-                  width = 0.15, height = 0, alpha = 0.5, color = "black", size = 1) +
-      labs(title = paste("Mean ± SE:", var),
-           x = id_col, y = var) +
+      geom_errorbar(
+        aes(ymin = mean_val - se_val, ymax = mean_val + se_val),
+        width = 0.1,
+        color = "black"
+      ) +
+      geom_jitter(
+        data = data,
+        aes_string(x = id_col, y = var),
+        width = 0.15,
+        height = 0,
+        alpha = 0.5,
+        color = "black",
+        size = 1
+      ) +
+      labs(title = paste("Mean ?? SE:", var),
+           x = id_col,
+           y = var) +
       theme_classic() +
-      theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+      theme(axis.text.x = element_text(
+        angle = 90,
+        vjust = 0.5,
+        hjust = 1
+      )) +
       scale_y_continuous(expand = expansion(mult = c(0, 0.1)))
     
     # Save static plot
-    ggsave(file.path(plot_dir, paste0(gsub("[^A-Za-z0-9_]", "_", var), "_histogram.png")), p)
+    ggsave(file.path(plot_dir, paste0(
+      gsub("[^A-Za-z0-9_]", "_", var), "_histogram.png"
+    )), p)
     return(ggplotly(p))
   })
   
@@ -730,7 +635,7 @@ graph_histograms_with_error <- function(
 get_stats <- function(model, label) {
   mod_summary <- summary(model)
   
-  # Safely extract R² and p-value
+  # Safely extract R?? and p-value
   r2 <- round(mod_summary$r.squared, 3)
   
   # Catch models with missing or weird coefficients
@@ -740,7 +645,7 @@ get_stats <- function(model, label) {
     p <- round(mod_summary$coefficients[2, 4], 3)  # p-value for x term
   }
   
-  paste0(label, ": R²=", r2, ", p=", p)
+  paste0(label, ": R??=", r2, ", p=", p)
 }
 #
 #
@@ -754,25 +659,200 @@ get_stats <- function(model, label) {
 #
 #
 #
-#
+
+analyze_replicates <- function(data,
+                               id_col = "ID",
+                               value_col = NULL, # New: specify a single numeric column to analyze
+                               weight_col = "sample weight", # Optional: for average weight in summary
+                               date_col = NULL,    # Optional: for date in summary
+                               output_prefix = "replicate_analysis",
+                               choose_best_3 = FALSE, # If TRUE, attempts to pick best 3 if >3 replicates
+                               dir = "export") {
+  
+  # Ensure the output directory exists
+  if (!dir.exists(dir)) {
+    message("Output directory not found. Creating it now: ", dir)
+    dir.create(dir, recursive = TRUE)
+  }
+  
+  # Validate id_col
+  if (!id_col %in% names(data)) {
+    stop(paste0("Error: 'id_col' (", id_col, ") not found in the data. Please check your column name."))
+  }
+  data[[id_col]] <- as.factor(data[[id_col]])
+  
+  # Validate date_col and convert to Date if present
+  if (!is.null(date_col) && date_col %in% names(data)) {
+    data[[date_col]] <- as.Date(data[[date_col]], tz = "UTC") # Ensure consistent date type and timezone
+  }
+  
+  # Identify numeric columns to analyze
+  numeric_cols <- character(0) # Initialize as empty character vector
+  
+  if (!is.null(value_col)) {
+    if (!value_col %in% names(data)) {
+      stop(paste0("Error: 'value_col' (", value_col, ") not found in the data."))
+    }
+    if (!is.numeric(data[[value_col]])) {
+      stop(paste0("Error: 'value_col' (", value_col, ") must be a numeric column."))
+    }
+    numeric_cols <- value_col
+  } else {
+    # If no specific value_col, analyze all numeric columns excluding metadata
+    exclude_cols <- c(id_col)
+    if (!is.null(weight_col) && weight_col %in% names(data)) {
+      exclude_cols <- c(exclude_cols, weight_col)
+    }
+    if (!is.null(date_col) && date_col %in% names(data)) {
+      exclude_cols <- c(exclude_cols, date_col)
+    }
+    
+    # Select numeric columns that are not in the exclude_cols list
+    numeric_cols <- data %>%
+      select(where(is.numeric)) %>%
+      select(-any_of(exclude_cols)) %>%
+      colnames()
+    
+    if (length(numeric_cols) == 0) {
+      stop("No numeric columns found for analysis after excluding ID, weight, and date columns.
+            Please check your data or specify a 'value_col'.")
+    }
+    message(paste0("Analyzing all numeric columns: ", paste(numeric_cols, collapse = ", ")))
+  }
+  
+  # Pivot to long format for analysis
+  long_data <- data %>%
+    pivot_longer(cols = all_of(numeric_cols), names_to = "measure", values_to = "value")
+  
+  # Summary stats with best selection if enabled
+  summary_long <- long_data %>%
+    group_by(.data[[id_col]], measure) %>%
+    group_modify(~ {
+      df_sub <- .x # Current group's data for a specific ID and measure
+      n <- nrow(df_sub)
+      
+      if (choose_best_3) { # Directly call select_best_three if choose_best_3 is TRUE
+        selected <- select_best_three(df_sub)
+        keep_rows <- selected$included_rows
+        excluded_rows_for_output <- selected$excluded_rows_indices # Store for output
+      } else {
+        keep_rows <- seq_len(n)
+        excluded_rows_for_output <- NA_integer_ # No exclusions if not choosing best 3
+      }
+      
+      keep_rows_vector <- as.vector(keep_rows) # Ensure it's a vector for subsetting
+      df_best <- df_sub[keep_rows_vector, , drop = FALSE] # Use drop = FALSE to keep as data.frame/tibble
+      m <- nrow(df_best) # Actual number of rows used for calculation
+      
+      # Calculate statistics
+      mean_val <- mean(df_best$value, na.rm = TRUE)
+      sd_val <- sd(df_best$value, na.rm = TRUE)
+      se_val <- sd_val / sqrt(m)
+      cv_val <- (sd_val / mean_val) # Calculate CV, handle division by zero if mean_val is 0
+      max_dev_pct_val <- max(abs(df_best$value - mean_val) / mean_val * 100, na.rm = TRUE)
+      
+      # Handle cases where mean_val might be 0, leading to Inf/NaN CV
+      if (is.infinite(cv_val) || is.nan(cv_val)) {
+        cv_val <- NA_real_
+      }
+      if (is.infinite(max_dev_pct_val) || is.nan(max_dev_pct_val)) {
+        max_dev_pct_val <- NA_real_
+      }
+      
+      
+      out <- tibble(
+        n = m,
+        mean = mean_val,
+        sd = sd_val,
+        se = se_val,
+        cv = cv_val,
+        max_dev_pct = max_dev_pct_val
+      )
+      
+      # Add included/excluded rows information if choose_best_3 is enabled
+      if (choose_best_3 && n > 0) { # Only add if there were original rows to consider
+        included_str <- paste(sort(keep_rows_vector), collapse = ",")
+        excluded_str <- if (length(excluded_rows_for_output) == 0 || all(is.na(excluded_rows_for_output))) {
+          NA_character_
+        } else {
+          paste(sort(excluded_rows_for_output[!is.na(excluded_rows_for_output)]), collapse = ",")
+        }
+        out <- out %>%
+          mutate(included_rows = included_str,
+                 excluded_rows = excluded_str)
+      }
+      
+      out
+    }) %>%
+    ungroup()
+  
+  # Pivot stats to wide format
+  # Using .value to automatically append stat names
+  summary_wide <- summary_long %>%
+    pivot_wider(
+      names_from = measure,
+      values_from = c(mean, sd, se, cv, max_dev_pct, n,
+                      if (choose_best_3) c("included_rows", "excluded_rows") else NULL), # Conditionally include these columns
+      names_glue = "{measure}_{.value}"
+    )
+  
+  # Metadata summary (conditional on column existence and type)
+  replicate_info <- data %>%
+    group_by(.data[[id_col]]) %>%
+    summarise(
+      avg_sample_weight = if (!is.null(weight_col) && weight_col %in% names(data) && is.numeric(.data[[weight_col]])) {
+        mean(.data[[weight_col]], na.rm = TRUE)
+      } else {
+        NA_real_ # Return NA if column doesn't exist or isn't numeric
+      },
+      replicate_date = if (!is.null(date_col) && date_col %in% names(data)) {
+        dates <- unique(.data[[date_col]])
+        if (length(dates) == 1) {
+          as.character(dates)
+        } else {
+          paste0("Mixed (", paste(sort(dates), collapse = "; "), ")")
+        }
+      } else {
+        NA_character_
+      },
+      replicate_count = n(),
+      .groups = "drop"
+    )
+  
+  # Final merge and export
+  final_summary <- summary_wide %>%
+    left_join(replicate_info, by = id_col)
+  
+  summary_csv <- file.path(dir, paste0(output_prefix, "_summary.csv"))
+  write.csv(final_summary, summary_csv, row.names = FALSE, na = "")
+  message("Success! Summary saved to: ", summary_csv)
+  
+  return(final_summary)
+}
+
+# This function is designed to perform group comparisons and generate plots.
+# It requires the 'rstatix', 'PMCMRplus', and 'multcompView' packages for full functionality.
 compare_groups <- function(data,
                            response_var,
                            group_var,
                            facet_var  = NULL,
                            subfolder_name = NULL) {
-  # Load required packages
-  if (!requireNamespace("ggpubr", quietly = TRUE)) install.packages("ggpubr")
-  library(ggpubr)
-  library(dplyr)
-  library(stringr)
-  library(tibble)
-  library(multcompView)
-  library(rlang)
+  # Load required packages (assuming they are installed in the main script)
+  # You might need to add:
+  # library(rstatix)
+  # library(PMCMRplus)
+  # library(multcompView)
   
-  # Use global params from Rmd for base dirs
-  base_plot_dir   <- plot_dir
-  base_report_dir <- report_dir
-  base_data_dir   <- data_dir
+  # Use global params for base dirs (assuming they are defined in the Rmd environment)
+  # These variables (plot_dir, report_dir, data_dir) need to be defined in your RMarkdown setup chunk.
+  # For example:
+  # plot_dir <- "output/plots"
+  # report_dir <- "output/reports"
+  # data_dir <- "output/data"
+  
+  base_plot_dir   <- if(exists("plot_dir")) plot_dir else "output/plots"
+  base_report_dir <- if(exists("report_dir")) report_dir else "output/reports"
+  base_data_dir   <- if(exists("data_dir")) data_dir else "output/data"
   
   # If subfolder name is provided, append it to each base dir
   if (!is.null(subfolder_name)) {
@@ -784,16 +864,19 @@ compare_groups <- function(data,
     dir.create(base_data_dir, recursive = TRUE, showWarnings = FALSE)
   }
   
-  # Clean name helper
+  # Helper function to clean names for file saving
   clean_name <- function(x) {
-    x %>% str_replace_all("[^a-zA-Z]+", "_") %>% str_remove_all("_$") %>% str_remove_all("^_")
+    x %>% str_replace_all("[^a-zA-Z0-9]+", "_") %>% str_remove_all("_$") %>% str_remove_all("^_")
   }
   
-  # Compact letter display
-  generate_group_letters <- function(posthoc_df) {
-    comps <- str_split_fixed(posthoc_df$comparison, "-", 2)
-    pvals <- setNames(posthoc_df$`p adj`, paste(comps[,1], comps[,2], sep = "-"))
-    cld <- multcompLetters(pvals)
+  # Compact letter display helper
+  generate_group_letters <- function(posthoc_df, p_adj_col = "p adj", comparison_col = "comparison") {
+    comps <- str_split_fixed(posthoc_df[[comparison_col]], "-", 2)
+    pvals <- setNames(posthoc_df[[p_adj_col]], paste(comps[,1], comps[,2], sep = "-"))
+    # multcompLetters requires p-values to be numeric
+    pvals_numeric <- as.numeric(pvals)
+    names(pvals_numeric) <- names(pvals)
+    cld <- multcompLetters(pvals_numeric)
     tibble(group = names(cld$Letters), letter = cld$Letters)
   }
   
@@ -808,7 +891,16 @@ compare_groups <- function(data,
     ) %>%
     filter(!is.na(!!response_sym), !is.na(!!group_sym))
   
+  if (nrow(df) == 0) {
+    message("No valid data points after filtering for response and group variables. Skipping analysis.")
+    return(invisible(list()))
+  }
+  
+  
   if (!is.null(facet_var)) {
+    if (!facet_var %in% names(df)) {
+      stop(paste0("Error: 'facet_var' (", facet_var, ") not found in the data."))
+    }
     df_split     <- df %>% group_split(!!facet_sym)
     facet_levels <- df %>% pull(!!facet_sym) %>% as.character() %>% unique()
   } else {
@@ -823,7 +915,7 @@ compare_groups <- function(data,
   
   for (i in seq_along(df_split)) {
     sub_df     <- df_split[[i]]
-    facet_name <- facet_levels[i]
+    facet_name <- clean_name(facet_levels[i]) # Clean facet name for file saving
     
     summary_tbl <- sub_df %>%
       group_by(!!group_sym) %>%
@@ -835,9 +927,11 @@ compare_groups <- function(data,
         IQR    = IQR(!!response_sym, na.rm = TRUE),
         .groups = "drop"
       )
-    save_object(summary_tbl, paste0("summary_", facet_name), directory = "data", subdir = subfolder_name, format = "csv")
+    # save_object function would need to be defined or replaced with write_csv
+    write_csv(summary_tbl, file.path(base_data_dir, paste0("summary_", clean_name(facet_name), ".csv")))
+    message(paste0("Summary table saved for facet '", facet_name, "' to ", file.path(base_data_dir, paste0("summary_", clean_name(facet_name), ".csv"))))
     
-    ng <- nlevels(sub_df[[group_var]])
+    ng <- nlevels(factor(sub_df[[group_var]])) # Recalculate nlevels for sub_df
     test_results <- NULL
     posthoc_results <- NULL
     group_letters <- NULL
@@ -846,7 +940,7 @@ compare_groups <- function(data,
       fmla <- as.formula(paste(response_var, "~", group_var))
       t_res <- t.test(fmla, data = sub_df)
       w_res <- wilcox.test(fmla, data = sub_df)
-      d     <- cohens_d(fmla, data = sub_df)
+      d     <- cohens_d(fmla, data = sub_df) # From rstatix
       
       test_results <- tibble(
         test        = c("t.test", "wilcox.test"),
@@ -857,13 +951,13 @@ compare_groups <- function(data,
         CI_lower    = c(t_res$conf.int[1], NA),
         CI_upper    = c(t_res$conf.int[2], NA)
       )
-    } else {
+    } else if (ng > 2) { # Only run ANOVA/Kruskal-Wallis if more than 2 groups
       fmla <- as.formula(paste(response_var, "~", group_var))
       aov_res <- aov(fmla, data = sub_df)
       kw_res  <- kruskal.test(fmla, data = sub_df)
       
-      eta2  <- eta_squared(aov_res)
-      r_eta <- rank_eta_squared(fmla, data = sub_df)
+      eta2    <- eta_squared(aov_res) # From rstatix
+      r_eta <- rank_eta_squared(fmla, data = sub_df) # From rstatix
       
       test_results <- tibble(
         test        = c("ANOVA", "Kruskal-Wallis"),
@@ -877,71 +971,90 @@ compare_groups <- function(data,
       
       if (summary(aov_res)[[1]]$`Pr(>F)`[1] < 0.05) {
         tukey <- TukeyHSD(aov_res)
-        posthoc_results <- as.data.frame(tukey[[1]])
-        posthoc_results$comparison <- rownames(posthoc_results)
-        rownames(posthoc_results) <- NULL
-        group_letters <- generate_group_letters(posthoc_results)
+        posthoc_results <- as.data.frame(tukey[[1]]) %>%
+          tibble::rownames_to_column(var = "comparison") %>% # Convert row names to a column
+          rename(
+            `p adj` = `p adj` # Rename for clarity, if needed, ensure this matches posthoc_df structure for generate_group_letters
+          )
+        
+        group_letters <- generate_group_letters(posthoc_results, p_adj_col = "p adj", comparison_col = "comparison")
       } else if (kw_res$p.value < 0.05) {
+        # Using pairwise.wilcox.test for Kruskal-Wallis post-hoc
         ph <- pairwise.wilcox.test(sub_df[[response_var]], sub_df[[group_var]], p.adjust.method = "BH")
         posthoc_results <- as.data.frame(as.table(ph$p.value)) %>%
           filter(!is.na(Freq)) %>%
-          rename(comparison_1 = Var1, comparison_2 = Var2, p_value = Freq)
+          rename(comparison_1 = Var1, comparison_2 = Var2, `p adj` = Freq) %>% # Rename Freq to p adj
+          unite(col = "comparison", comparison_1, comparison_2, sep = "-") # Create a 'comparison' column
+        group_letters <- generate_group_letters(posthoc_results, p_adj_col = "p adj", comparison_col = "comparison")
       }
+    } else {
+      message(paste0("Only 1 group (", ng, ") for ", response_var, " by ", group_var, " in facet ", facet_name, ". Skipping tests and post-hoc analysis."))
     }
     
-    save_object(test_results, paste0("tests_", facet_name), directory = "data", subdir = subfolder_name, format = "csv")
-    if (!is.null(posthoc_results)) save_object(posthoc_results, paste0("posthoc_", facet_name), directory = "data", subdir = subfolder_name, format = "csv")
-    if (!is.null(group_letters))    save_object(group_letters, paste0("group_letters_", facet_name), directory = "data", subdir = subfolder_name, format = "csv")
+    write_csv(test_results, file.path(base_data_dir, paste0("tests_", clean_name(facet_name), ".csv")))
+    message(paste0("Test results saved for facet '", facet_name, "' to ", file.path(base_data_dir, paste0("tests_", clean_name(facet_name), ".csv"))))
     
+    if (!is.null(posthoc_results)) {
+      write_csv(posthoc_results, file.path(base_data_dir, paste0("posthoc_", clean_name(facet_name), ".csv")))
+      message(paste0("Posthoc results saved for facet '", facet_name, "' to ", file.path(base_data_dir, paste0("posthoc_", clean_name(facet_name), ".csv"))))
+    }
     if (!is.null(group_letters)) {
-      label_positions <- sub_df %>%
-        mutate(group = as.character(!!group_sym)) %>%
-        group_by(group) %>%
-        summarise(y_pos = max(!!response_sym, na.rm = TRUE) * 1.05, .groups = "drop")
-      
-      group_letters <- group_letters %>% mutate(group = as.character(group))
-      label_df <- left_join(group_letters, label_positions, by = "group")
+      write_csv(group_letters, file.path(base_data_dir, paste0("group_letters_", clean_name(facet_name), ".csv")))
+      message(paste0("Group letters saved for facet '", facet_name, "' to ", file.path(base_data_dir, paste0("group_letters_", clean_name(facet_name), ".csv"))))
     }
     
-    sub_df[[group_var]] <- factor(sub_df[[group_var]], levels = levels(df[[group_var]]))
-    
-    p <- ggboxplot(
+    # Plotting using ggplot2 directly
+    p <- ggplot(
       sub_df,
-      x        = group_var,
-      y        = response_var,
-      color    = group_var,
-      palette  = "jco",
-      add      = "jitter",
-      add.params = list(size = 2, alpha = 0.7, width = 0.3),
-      outlier.shape = NA
+      aes(x = .data[[group_var]], y = .data[[response_var]], color = .data[[group_var]]) # Use .data[[]] for unquoted column names
     ) +
+      geom_boxplot(outlier.shape = NA) + # Remove outliers from boxplot to add them via jitter
+      geom_jitter(width = 0.1, alpha = 0.7, size = 2) + # Add jittered points, similar to add = "jitter"
+      scale_color_viridis_d(option = "D") + # A good default color palette, similar to "jco" or others
+      labs(
+        title = paste0(response_var, " by ", group_var, " (", facet_name, ")"),
+        x = group_var,
+        y = response_var
+      ) +
       coord_cartesian(ylim = c(0, max(df[[response_var]], na.rm = TRUE) * 1.2)) +
-      theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+      theme_minimal() +
+      theme(
+        axis.text.x = element_text(angle = 45, hjust = 1), # Better angle for x-axis labels
+        plot.title = element_text(hjust = 0.5)
+      )
     
     if (!is.null(facet_var)) {
       p <- p + facet_wrap(as.formula(paste("~", facet_var)))
     }
     
-    if (exists("label_df") && nrow(label_df) > 0 && all(!is.na(label_df$y_pos))) {
-      p <- p + geom_text(
-        data = label_df,
-        aes(x = group, y = y_pos, label = letter),
-        vjust = -0.5,
-        fontface = "bold",
-        size = 2.5,
-        inherit.aes = FALSE
-      )
+    if (!is.null(group_letters) && nrow(group_letters) > 0) {
+      # Calculate y_pos for group letters
+      # Ensure y_pos is calculated for each group within the current sub_df
+      label_positions <- sub_df %>%
+        group_by(!!group_sym) %>%
+        summarise(y_pos = max(!!response_sym, na.rm = TRUE) * 1.05, .groups = "drop")
+      
+      label_df <- left_join(group_letters, label_positions, by = c("group" = group_var)) %>% # Join by group name
+        filter(!is.na(y_pos)) # Ensure positions exist
+      
+      if (nrow(label_df) > 0) {
+        p <- p + geom_text(
+          data = label_df,
+          aes(x = .data$group, y = .data$y_pos, label = .data$letter),
+          vjust = -0.5,
+          fontface = "bold",
+          size = 3, # Adjusted size for better visibility
+          inherit.aes = FALSE
+        )
+      }
     }
     
-    save_object(p,
-                filename  = paste0("plot_", clean_response, "_by_", clean_group, "_", facet_name),
-                directory = "plots",
-                subdir    = subfolder_name,
-                width     = 8,
-                height    = 6,
-                dpi       = 300)
+    # Use ggsave to save the plot
+    plot_filename <- file.path(base_plot_dir, paste0("plot_", clean_response, "_by_", clean_group, "_", clean_name(facet_name), ".png"))
+    ggsave(plot_filename, plot = p, width = 8, height = 6, dpi = 300)
+    message(paste0("Plot saved to: ", plot_filename))
     
-    print(p)
+    print(p) # Display the plot in the R session
     
     all_results[[facet_name]] <- list(
       summary   = summary_tbl,
@@ -954,6 +1067,8 @@ compare_groups <- function(data,
   invisible(all_results)
 }
 
+
+# --- Helper Functions ---
 #
 
 #
@@ -983,8 +1098,14 @@ compare_groups_bootstrap <- function(data,
                                      assumptions_test = FALSE,
                                      report_dir       = "reports",
                                      plot_dir         = "plots") {
-  library(dplyr); library(purrr); library(boot); library(ggplot2)
-  library(tibble); library(tidyr); library(effsize); library(stringr)
+  library(dplyr)
+  library(purrr)
+  library(boot)
+  library(ggplot2)
+  library(tibble)
+  library(tidyr)
+  library(effsize)
+  library(stringr)
   
   clean_name <- function(x) {
     x %>%
@@ -995,12 +1116,12 @@ compare_groups_bootstrap <- function(data,
   
   response_sym <- sym(response_var)
   group_sym    <- sym(group_var)
-  if (!is.null(facet_var)) facet_sym <- sym(facet_var)
+  if (!is.null(facet_var))
+    facet_sym <- sym(facet_var)
   
   df <- data %>%
     mutate(
-      !!group_sym    := factor(!!group_sym, levels = unique(data[[group_var]])),
-      !!response_sym := as.numeric(!!response_sym)
+      !!group_sym    := factor(!!group_sym, levels = unique(data[[group_var]])),!!response_sym := as.numeric(!!response_sym)
     ) %>%
     filter(!is.na(!!response_sym), !is.na(!!group_sym))
   
@@ -1016,32 +1137,39 @@ compare_groups_bootstrap <- function(data,
   clean_group    <- clean_name(group_var)
   sub_report_dir <- file.path(report_dir, paste0(clean_response, "_by_", clean_group))
   sub_plot_dir   <- file.path(plot_dir, paste0(clean_response, "_by_", clean_group))
-  dir.create(sub_report_dir, showWarnings = FALSE, recursive = TRUE)
-  dir.create(sub_plot_dir,   showWarnings = FALSE, recursive = TRUE)
+  dir.create(sub_report_dir,
+             showWarnings = FALSE,
+             recursive = TRUE)
+  dir.create(sub_plot_dir,
+             showWarnings = FALSE,
+             recursive = TRUE)
   
-  boot_mean_fn <- function(dat, i) mean(dat[i])
+  boot_mean_fn <- function(dat, i)
+    mean(dat[i])
   
   compute_effsize_boot <- function(x, y, n_boot, conf_level) {
-    pooled <- data.frame(val = c(x, y), grp = rep(c(1,2), c(length(x), length(y))))
+    pooled <- data.frame(val = c(x, y), grp = rep(c(1, 2), c(length(x), length(y))))
     
     md_stat <- function(d, ix) {
-      d2 <- d[ix,]
-      mean(d2$val[d2$grp==1]) - mean(d2$val[d2$grp==2])
+      d2 <- d[ix, ]
+      mean(d2$val[d2$grp == 1]) - mean(d2$val[d2$grp == 2])
     }
     cd_stat <- function(d, ix) {
-      d2 <- d[ix,]
-      effsize::cohen.d(d2$val[d2$grp==1], d2$val[d2$grp==2], pooled = TRUE)$estimate
+      d2 <- d[ix, ]
+      effsize::cohen.d(d2$val[d2$grp == 1], d2$val[d2$grp == 2], pooled = TRUE)$estimate
     }
     
     b_md <- boot(pooled, md_stat, R = n_boot)
     ci_md <- tryCatch({
       boot.ci(b_md, conf = conf_level, type = "perc")$percent[4:5]
-    }, error = function(e) c(NA, NA))
+    }, error = function(e)
+      c(NA, NA))
     
     b_cd <- boot(pooled, cd_stat, R = n_boot)
     ci_cd <- tryCatch({
       boot.ci(b_cd, conf = conf_level, type = "perc")$percent[4:5]
-    }, error = function(e) c(NA, NA))
+    }, error = function(e)
+      c(NA, NA))
     
     cohens_d_point <- effsize::cohen.d(x, y, pooled = TRUE)$estimate
     
@@ -1063,8 +1191,14 @@ compare_groups_bootstrap <- function(data,
       if (is.na(df$letter[i])) {
         df$letter[i] <- letters[current_letter]
         for (j in seq((i + 1), nrow(df))) {
-          if (!anyNA(c(df$ci_lower[j], df$ci_upper[j], df$ci_lower[i], df$ci_upper[i])) &&
-              df$ci_lower[j] <= df$ci_upper[i] && df$ci_upper[j] >= df$ci_lower[i]) {
+          if (!anyNA(c(
+            df$ci_lower[j],
+            df$ci_upper[j],
+            df$ci_lower[i],
+            df$ci_upper[i]
+          )) &&
+          df$ci_lower[j] <= df$ci_upper[i] &&
+          df$ci_upper[j] >= df$ci_lower[i]) {
             df$letter[j] <- letters[current_letter]
           }
         }
@@ -1083,12 +1217,14 @@ compare_groups_bootstrap <- function(data,
     grp_levels <- levels(sub_df[[group_var]])
     
     if (length(grp_levels) < 2) {
-      warning("Facet '", facet_name, "' skipped: not enough groups for comparison.")
+      warning("Facet '",
+              facet_name,
+              "' skipped: not enough groups for comparison.")
       next
     }
     
     group_boot_list <- map(grp_levels, function(g) {
-      vals <- sub_df %>% filter((!!group_sym)==g) %>% pull(!!response_sym)
+      vals <- sub_df %>% filter((!!group_sym) == g) %>% pull(!!response_sym)
       b    <- boot(vals, boot_mean_fn, R = n_boot)
       ci   <- boot.ci(b, conf = conf_level, type = "perc")$percent[4:5]
       tibble(
@@ -1103,9 +1239,10 @@ compare_groups_bootstrap <- function(data,
     pairwise <- combn(grp_levels, 2, simplify = FALSE) %>%
       map_dfr(function(p) {
         compute_effsize_boot(
-          x = sub_df %>% filter((!!group_sym)==p[1]) %>% pull(!!response_sym),
-          y = sub_df %>% filter((!!group_sym)==p[2]) %>% pull(!!response_sym),
-          n_boot, conf_level
+          x = sub_df %>% filter((!!group_sym) == p[1]) %>% pull(!!response_sym),
+          y = sub_df %>% filter((!!group_sym) == p[2]) %>% pull(!!response_sym),
+          n_boot,
+          conf_level
         ) %>%
           mutate(group1 = p[1], group2 = p[2])
       })
@@ -1113,8 +1250,11 @@ compare_groups_bootstrap <- function(data,
     bartlett_test <- NULL
     if (assumptions_test) {
       bartlett_test <- tryCatch(
-        bartlett.test(as.formula(paste(response_var, "~", group_var)), data = sub_df),
-        error = function(e) NULL
+        bartlett.test(as.formula(
+          paste(response_var, "~", group_var)
+        ), data = sub_df),
+        error = function(e)
+          NULL
       )
     }
     
@@ -1124,10 +1264,22 @@ compare_groups_bootstrap <- function(data,
     
     group_boot_list <- assign_overlap_letters(group_boot_list)
     
-    write.csv(group_boot_list, file = file.path(sub_report_dir, paste0("means_", facet_name, ".csv")), row.names = FALSE)
-    write.csv(pairwise,        file = file.path(sub_report_dir, paste0("effects_", facet_name, ".csv")), row.names = FALSE)
-    write.csv(group_boot_list %>% select(group, letter),
-              file = file.path(sub_report_dir, paste0("group_letters_", facet_name, ".csv")), row.names = FALSE)
+    write.csv(
+      group_boot_list,
+      file = file.path(sub_report_dir, paste0("means_", facet_name, ".csv")),
+      row.names = FALSE
+    )
+    write.csv(pairwise,
+              file = file.path(sub_report_dir, paste0("effects_", facet_name, ".csv")),
+              row.names = FALSE)
+    write.csv(
+      group_boot_list %>% select(group, letter),
+      file = file.path(
+        sub_report_dir,
+        paste0("group_letters_", facet_name, ".csv")
+      ),
+      row.names = FALSE
+    )
     
     all_summaries[[facet_name]] <- list(
       group_bootstrap_means = group_boot_list,
@@ -1139,54 +1291,88 @@ compare_groups_bootstrap <- function(data,
     p1 <- ggplot(group_boot_list, aes(x = group, y = mean_est)) +
       geom_point(size = 3) +
       geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), width = 0.2) +
-      geom_text(aes(label = letter, y = ci_upper * 1.05), vjust = 0, fontface = "bold", size = 3) +
+      geom_text(
+        aes(label = letter, y = ci_upper * 1.05),
+        vjust = 0,
+        fontface = "bold",
+        size = 3
+      ) +
       theme_minimal() +
       labs(
-        title = paste0("Bootstrapped Means ± ", conf_level * 100, "% CI [", facet_name, "]"),
-        x     = group_var, y = response_var
+        title = paste0(
+          "Bootstrapped Means ?? ",
+          conf_level * 100,
+          "% CI [",
+          facet_name,
+          "]"
+        ),
+        x     = group_var,
+        y = response_var
       ) +
       theme(axis.text.x = element_text(angle = 45, hjust = 1))
     print(p1)
-    ggsave(file.path(sub_plot_dir, paste0("means_", facet_name, ".png")), p1, width = 8, height = 6)
+    ggsave(file.path(sub_plot_dir, paste0("means_", facet_name, ".png")),
+           p1,
+           width = 8,
+           height = 6)
     
     df2 <- pairwise %>%
-      pivot_longer(c(mean_diff, cohens_d), names_to = "metric", values_to = "est") %>%
+      pivot_longer(c(mean_diff, cohens_d),
+                   names_to = "metric",
+                   values_to = "est") %>%
       mutate(
-        lower = ifelse(metric=="mean_diff", mean_diff_lower, cohens_d_lower),
-        upper = ifelse(metric=="mean_diff", mean_diff_upper, cohens_d_upper),
+        lower = ifelse(metric == "mean_diff", mean_diff_lower, cohens_d_lower),
+        upper = ifelse(metric == "mean_diff", mean_diff_upper, cohens_d_upper),
         comp  = paste(group1, "vs", group2)
       )
     p2 <- ggplot(df2, aes(comp, est, color = metric)) +
       geom_point(position = position_dodge(0.5), size = 3) +
       geom_errorbar(aes(ymin = lower, ymax = upper),
-                    position = position_dodge(0.5), width = 0.2) +
+                    position = position_dodge(0.5),
+                    width = 0.2) +
       coord_flip() +
       theme_minimal() +
       labs(
-        title = paste0("Pairwise Effects ± ", conf_level * 100, "% CI [", facet_name, "]"),
-        x = "", y = "Estimate"
+        title = paste0(
+          "Pairwise Effects ?? ",
+          conf_level * 100,
+          "% CI [",
+          facet_name,
+          "]"
+        ),
+        x = "",
+        y = "Estimate"
       )
     print(p2)
-    ggsave(file.path(sub_plot_dir, paste0("effects_", facet_name, ".png")), p2, width = 9, height = 6)
+    ggsave(file.path(sub_plot_dir, paste0("effects_", facet_name, ".png")),
+           p2,
+           width = 9,
+           height = 6)
     
     if (assumptions_test) {
       boot_dists_df <- map2_df(group_boot_list$group, group_boot_list$n, function(grp, n) {
         tibble(
           group     = grp,
-          boot_mean = boot(data = sub_df %>% filter((!!group_sym)==grp) %>% pull(!!response_sym),
-                           statistic = boot_mean_fn, R = n_boot)$t[,1]
+          boot_mean = boot(
+            data = sub_df %>% filter((!!group_sym) == grp) %>% pull(!!response_sym),
+            statistic = boot_mean_fn,
+            R = n_boot
+          )$t[, 1]
         )
       })
       p3 <- ggplot(boot_dists_df, aes(boot_mean)) +
         geom_density(fill = "steelblue", alpha = 0.4) +
-        facet_wrap(~group, scales = "free") +
+        facet_wrap( ~ group, scales = "free") +
         theme_minimal() +
         labs(
           title = paste0("Bootstrap Density [", facet_name, "]"),
           x     = paste("Bootstrapped", response_var)
         )
       print(p3)
-      ggsave(file.path(sub_plot_dir, paste0("density_", facet_name, ".png")), p3, width = 9, height = 6)
+      ggsave(file.path(sub_plot_dir, paste0("density_", facet_name, ".png")),
+             p3,
+             width = 9,
+             height = 6)
     }
   }
   
@@ -1209,7 +1395,9 @@ compare_groups_bootstrap <- function(data,
 #
 #
 #
-calc_PE_from_Xred <- function(df, fluor_col = "Xred", new_col = "PE_predicted_mg_per_g") {
+calc_PE_from_Xred <- function(df,
+                              fluor_col = "Xred",
+                              new_col = "PE_predicted_mg_per_g") {
   intercept <- coef_intercept
   slope     <- coef_slope
   
@@ -1237,7 +1425,8 @@ calc_PE_from_Xred <- function(df, fluor_col = "Xred", new_col = "PE_predicted_mg
 #
 #
 #
-add_PE_with_se <- function(df, fluor_col = "Xred",
+add_PE_with_se <- function(df,
+                           fluor_col = "Xred",
                            pred_col = "PE_pred_run2_mg_per_g",
                            se_col   = "PE_se_run2") {
   # Build a newdata frame for prediction
@@ -1275,16 +1464,13 @@ generate_group_letters <- function(posthoc_df) {
   comps <- str_split_fixed(posthoc_df$comparison, "-", 2)
   
   # Create a named vector of p-values
-  pvals <- setNames(posthoc_df$`p adj`, paste(comps[,1], comps[,2], sep = "-"))
+  pvals <- setNames(posthoc_df$`p adj`, paste(comps[, 1], comps[, 2], sep = "-"))
   
   # Run multcompView
   cld <- multcompLetters(pvals)
   
   # Return a data frame: group and its assigned letter
-  tibble::tibble(
-    group = names(cld$Letters),
-    letter = cld$Letters
-  )
+  tibble::tibble(group = names(cld$Letters), letter = cld$Letters)
 }
 #
 #
@@ -1310,7 +1496,6 @@ save_object <- function(object,
                         format    = NULL,
                         subdir    = NULL,
                         ...) {
-  
   directory <- match.arg(directory)
   base_dir  <- switch(directory,
                       plots   = plot_dir,
@@ -1318,21 +1503,30 @@ save_object <- function(object,
                       reports = report_dir)
   
   # Build full target directory (with optional subdir)
-  target_dir <- if (!is.null(subdir)) file.path(base_dir, subdir) else base_dir
-  if (!dir.exists(target_dir)) dir.create(target_dir, recursive = TRUE)
+  target_dir <- if (!is.null(subdir))
+    file.path(base_dir, subdir)
+  else
+    base_dir
+  if (!dir.exists(target_dir))
+    dir.create(target_dir, recursive = TRUE)
   
   # Determine file extension
   if (is.null(format)) {
-    format <- if (inherits(object, "ggplot")) "png"
-    else if (inherits(object, "plotly")) "html"
-    else if (is.data.frame(object)) "csv"
-    else "rds"
+    format <- if (inherits(object, "ggplot"))
+      "png"
+    else if (inherits(object, "plotly"))
+      "html"
+    else if (is.data.frame(object))
+      "csv"
+    else
+      "rds"
   }
   
   out_path <- file.path(target_dir, paste0(filename, ".", format))
   
   # Save the object
-  if (inherits(object, "ggplot") && format %in% c("png", "pdf", "svg", "jpeg")) {
+  if (inherits(object, "ggplot") &&
+      format %in% c("png", "pdf", "svg", "jpeg")) {
     ggsave(filename = out_path, plot = object, ...)
   } else if (inherits(object, "plotly") && format == "html") {
     htmlwidgets::saveWidget(object, file = out_path, selfcontained = TRUE, ...)
@@ -1346,6 +1540,3 @@ save_object <- function(object,
   
   invisible(out_path)
 }
-
-
-

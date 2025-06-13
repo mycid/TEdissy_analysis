@@ -1,0 +1,69 @@
+"join_id","Sample Code","Location","region","variety","Ind_ID","Life_S","Large Ind?","car_per","t_rep_number"
+"Lab_01","R01","Mendieta","Paracas","C.Cham","I45","Tetra","Yes",0.460405765305473,2
+"Lab_02","R02","Mendieta","Paracas","C.Cham","I38","Tetra","Yes",0.071655941764969,2
+"Lab_03","R04","Mendieta","Paracas","C.Cham","I26","Carp","Yes",0.44967901234568,2
+"Lab_04","R02","Mendieta","Paracas","C.Cham","I37","Carp","Yes",0.44393398105887,2
+"Lab_05","R05","Mendieta","Paracas","C.Cham","I47","Gam","Yes",NA,NA
+"Lab_06","R04","Concession","Paracas","C.Cham","I63","Gam","Yes",0.0685263286063354,2
+"Lab_07","R01","Concession","Paracas","C.Cham","I49","Gam","Yes",0.278283867176023,1
+"Lab_08","R03","Concession","Paracas","C.Cham","I65","Gam","Yes",0.220359305369597,1
+"Lab_09","R02","Concession","Paracas","C.Cham","many","Gam/Tetra","No",NA,NA
+"Lab_10","R01","Mendieta","Paracas","F. Glom","many","Gam/Tetra","No",0.150753108196643,2
+"Lab_11","R02","Mendieta","Paracas","F. Glom","many","Gam/Tetra","No",0.339376028878002,1
+"Lab_12","R03","Mendieta","Paracas","F. Glom","many","Gam/Tetra","No",0.121213929160949,1
+"Lab_13","R01","Caro Caido","Marcona","C.Cham","many","Tetra","Yes",0.283916527092481,1
+"Lab_14","R02","Caro Caido","Marcona","C.Cham","CC10","Carp","Yes",0.629862306368331,1
+"Lab_15","R03","Caro Caido","Marcona","C.Cham","CC11","Gam","No",0.521604301166296,2
+"Lab_16","R01","7H","Marcona","F. Glom","many","Carp",NA,0.4443025707415,2
+"Lab_17","R02","7H","Marcona","F. Glom","many","Gam/Tetra",NA,0.509821073558648,1
+"Lab_18","R04","7H","Marcona","F. Glom","many","Carp",NA,0.339779833376621,1
+"Lab_19","R04","7H","Marcona","F. Glom","many","Gam/Tetra",NA,0.565391654817869,1
+"Lab_20","R01","Powder Ilo","Ilo","C.Cham","many","Unknown",NA,NA,NA
+"Lab_21","R02","Powder Ilo","Ilo","C.Cham","many","Unknown",NA,NA,NA
+"Lab_22","R03","Powder Ilo","Ilo","C.Cham","many","Unknown",NA,0.644241301706797,1
+"Lab_23","R01","Ilo mariculture","Ilo","C.Cham","many","Gam","Yes",NA,NA
+"Lab_24","R02","Ilo mariculture","Ilo","C.Cham","many","Gam","Yes",NA,NA
+"Lab_25","R03","Ilo mariculture","Ilo","C.Cham","many","Gam","Yes",NA,NA
+"Lab_28","R02","Mercado Lima","Paracas","C.Cham","many","Gam","Yes",NA,NA
+"Lab_29","R03","Mercado Lima","Paracas","C.Cham","many","Gam","Yes",NA,NA
+"Lab_32","R03","Mendieta","Paracas","C.Cham","I34","Gam","Yes",NA,NA
+"Lab_35","Carp 01","Mendieta","Paracas","C.Cham",NA,"Carp","No",NA,NA
+"Lab_36","R05","Mendieta","Paracas","C.Cham",NA,"Gam/Tetra",NA,NA,NA
+"Lab_37","R01","Mendieta","Paracas","C.Cham",NA,"Carp",NA,NA,NA
+"Lab_38","R03","Mendieta","Paracas","C.Cham",NA,"Gam/Tetra",NA,NA,NA
+"Lab_39","R04","Mendieta","Paracas","F. Glom",NA,"Gam/Tetra",NA,NA,NA
+"Lab_40","R03","Mendieta","Paracas","F. Glom",NA,"Carp",NA,NA,NA
+"Lab_41","R05","Mendieta","Paracas","F. Glom",NA,"Gam/Tetra",NA,NA,NA
+"Lab_42","R01","Mendieta","Paracas","C.Cham",NA,"Gam/Tetra",NA,NA,NA
+"Lab_43","R04","Concession","Paracas","C.Cham",NA,"Gam/Tetra",NA,NA,NA
+"Lab_44","R03","Concession","Paracas","C.Cham",NA,"Gam/Tetra",NA,NA,NA
+"Lab_45","R02","Caro Caido","Marcona","C.Cham",NA,"Gam/Tetra",NA,0.278283867176023,2
+"Lab_46","R03","Caro Caido","Marcona","C.Cham",NA,"Carp",NA,NA,NA
+"Lab_47","R03","Caro Caido","Marcona","C.Cham",NA,"Gam/Tetra",NA,NA,NA
+"Lab_48","R02","7H","Marcona","F. Glom",NA,"Carp",NA,NA,NA
+"Lab_49","R01","7H","Marcona","C.Cham",NA,"Gam/Tetra",NA,NA,NA
+"Lab_50","R03","7H","Marcona","F. Glom",NA,"Carp",NA,NA,NA
+"Lab_51","R03","7H","Marcona","C.Cham",NA,"Carp",NA,NA,NA
+"Lab_52","R01","7H","Marcona","C.Cham",NA,"Carp",NA,NA,NA
+"Lab_53","R04","7H","Marcona","C.Cham",NA,"Carp",NA,NA,NA
+"Lab_54","R01","Ilo","Ilo","C.Cham","Ilo_01","Gam","Yes",NA,NA
+"Lab_55","R02","Ilo","Ilo","C.Cham","Ilo_02","Gam","Yes",NA,NA
+"Lab_56","R03","Ilo","Ilo","C.Cham","Ilo_03","Gam","Yes",NA,NA
+"Lab_57","R01","Lima Market Freeze Dry","Paracas","C.Cham",NA,"Gam",NA,NA,NA
+"Lab_58","R02","Lima Market Freeze Dry","Paracas","C.Cham",NA,"Gam",NA,NA,NA
+"Lab_59","R03","Lima Market Freeze Dry","Paracas","C.Cham",NA,"Gam",NA,NA,NA
+"Lab_60","R01","Lima Market Oven Dry","Paracas","C.Cham",NA,"Gam",NA,NA,NA
+"Lab_61","R02","Lima Market Oven Dry","Paracas","C.Cham",NA,"Gam",NA,NA,NA
+"Lab_62","R03","Lima Market Oven Dry","Paracas","C.Cham",NA,"Gam",NA,NA,NA
+"Lab_63","R01","Ilo Freeze Dry","Ilo","C.Cham",NA,"Gam",NA,NA,NA
+"Lab_65","R02","Ilo Freeze Dry","Ilo","C.Cham",NA,"Gam",NA,NA,NA
+"Lab_66","R03","Ilo Freeze Dry","Ilo","C.Cham",NA,"Gam",NA,NA,NA
+"Lab_68","R03","Ilo oven dry","Ilo","C.Cham",NA,"Gam",NA,NA,NA
+"Lab_67","R02","Ilo oven dry","Ilo","C.Cham",NA,"Gam",NA,NA,NA
+"Lab_64","R01","Ilo oven dry","Ilo","C.Cham",NA,"Gam",NA,NA,NA
+"Lab_70","R01","Ilo Fresh","Ilo","C.Cham",NA,"Gam",NA,NA,NA
+"Lab_71","R02","Ilo Fresh","Ilo","C.Cham",NA,"Gam",NA,NA,NA
+"Lab_72","R03","Ilo Fresh","Ilo","C.Cham",NA,"Gam",NA,NA,NA
+"Lab_73","R03","Lima Market Fresh","Paracas","C.Cham",NA,"Gam",NA,NA,NA
+"Lab_74","R02","Lima Market Fresh","Paracas","C.Cham",NA,"Gam",NA,NA,NA
+"Lab_75","R03","Lima Market Fresh","Paracas","C.Cham",NA,"Gam",NA,NA,NA

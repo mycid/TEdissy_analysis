@@ -1,68 +1,160 @@
 ---
-title: "Ash Content Analysis"
 author: "Trevor Eakes"
 date: "`r Sys.Date()`"
+title: "Ash content analysis"
 output: html_document
+params:
+  plot_dir:    "output_ash/plots"
+  data_dir:    "output_ash/export_data"
+  report_dir:  "output_ash/reports"
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
 ```
 
-## Load Required Packages
+## Load script and directories
+```{r}
+# Source script from top-level project folder
+source("../process_plate_run.R")
+#— 1. pull from params (or use defaults)
+plot_dir   <-  "output_ash/plots"
+data_dir   <-  "output_ash/export_data"
+report_dir <-  "output_ash/reports"
 
-```{r script}
-source("process_plate_run.R")
+#— 2. create all dirs
+walk(
+  c(plot = plot_dir, data = data_dir, reports = report_dir),
+  ~ if (!dir_exists(.x)) dir_create(.x, recurse = TRUE)
+)
+
+#— 3. register plot_dir with knitr
+opts_chunk$set(fig.path = paste0(plot_dir, "/"))
+#
 ```
 
-## Load the Data
+## Load input data
+```{r load-excel-files, warning=FALSE}
+# 1. Define the folder containing all Excel inputs
+input_folder <- "input_ash"
+getwd()
+# 2. Find all .xlsx files (full paths), excluding temp files that start with "~$"
+excel_files <- list.files(
+  path = input_folder, 
+  pattern = "\\.xlsx?$", 
+  full.names = TRUE
+)
+excel_files <- excel_files[!grepl("^~\\$", basename(excel_files))]
 
-```{r load-data}
-ash_data <- read_excel("ash_final.xlsx", sheet = 1)
-head(ash_data)
+# 3. Loop over each file
+for (file in excel_files) {
+  # 3a. Create a clean object name (strip out folder & extension)
+  name <- tools::file_path_sans_ext(basename(file))
+  
+  # 3b. Determine which sheet to read (second if possible, otherwise first)
+  sheet_names   <- excel_sheets(file)
+  sheet_to_read <- if (length(sheet_names) >= 2) sheet_names[2] else sheet_names[1]
+  
+  # 3c. Read the chosen sheet, suppressing verbose messages
+  data <- suppressMessages(read_excel(file, sheet = sheet_to_read))
+  
+  # 3d. Assign the data.frame to the global environment under "name"
+  assign(name, data, envir = .GlobalEnv)
+  
+  # 3e. Print a message to confirm successful load
+  message("Loaded: ", name, " (sheet = '", sheet_to_read, "')")
+}
 ```
 
-## Clean and Prepare Data
-
-```{r clean-data}
-ash_clean <- ash_data %>%
-  select(same_id, rep_id, ash_per) %>%
-  mutate(ash_per = as.numeric(ash_per)) %>%
-  drop_na()
-```
 
 ## Summary Statistics by Replicate
 
 ```{r summary-stats}
-analyze_replicates(ash_clean,
-                  id_col = "ID",
-                  join_col = "join_id",
-                               weight_col = "sample weight",
-                               date_col = "date",
-                               output_prefix = "all_rep_analy",
-                                choose_best_3 = FALSE)
+final_export_dir <- file.path("output_ash", "export_data", "Samples Analysis Final")
+dir.create(final_export_dir, recursive = TRUE, showWarnings = FALSE)
+
+ash_data_dir <- file.path("output_ash/export_data", "processed")
+dir.create(ash_data_dir, recursive = TRUE, showWarnings = FALSE)
+
+# Analyze replicate ash data to get mean and SE
+
+E_ash_rep_analy <- analyze_replicates(
+  data = ash_final,
+  id_col = "ID",
+  value_col = "ash_per",
+  choose_best_3 = TRUE, # Enable the best 3 selection
+  output_prefix = "E_ash_rep_analy",
+  dir = "output_ash/export_data"
+)
+
+# Join ash data with sample metadata
+joindf_by_id(
+  df1          = E_ash_rep_analy,
+  df2          = sample_data_limited,
+  save_csv_path  = file.path(final_export_dir, "ash_rep_final.csv"),
+  assign_name  = "ash_rep_final",
+  key_df1      = "ID",
+  key_df2      = "ID"
+)
+
+
+# Output directory for replicate analysis plots
+rep_plot_dir <- file.path("output_ash", "plots", "replicate_analysis")
+dir.create(rep_plot_dir, recursive = TRUE, showWarnings = FALSE)
+
+ash_location <- ash_rep_final %>%
+  filter(!Location %in% c("Lima Market Freeze Dry", "Ilo Freeze Dry", "Ilo oven dry", "Ilo Fresh", "Lima Market Fresh"))
+
+# Remove F.Glom for Chamissoi analysis
+ash_location_cham <- ash_rep_final %>%
+  filter(!variety %in% c("F.Glom"))
+
+# Group comparison: Location
+compare_groups(
+  data           = ash_location_cham,
+  response_var   = "ash_per_mean",
+  group_var      = "Location",
+  subfolder_name = "ash_Location_cham"
+)
+
+# Group comparison: Life Stage
+compare_groups(
+  data           = ash_location_cham,
+  response_var   = "ash_per_mean",
+  group_var      = "Life_S",
+  subfolder_name = "ash_Life_S_cham"
+)
+
+# Filter for gametophyte/tetrasporophyte stages
+ash_gamtetra <- ash_location %>%
+  filter(Life_S %in% c("Gam/Tetra", "Gam", "Tetra"))
+
+compare_groups(
+  data           = ash_gamtetra,
+  response_var   = "ash_per_mean",
+  group_var      = "Location",
+  subfolder_name = "ash_gamtetra_location"
+)
 ```
 
 ## Bar Plot with Error Bars
 
 ```{r plot-bar}
-ash_plot <- ggplot(ash_summary, aes(x = reorder(same_id, -mean_ash_percent), y = mean_ash_percent)) +
+ash_plot <- ggplot(ash_rep_final, aes(x = reorder(join_id, -ash_per_mean), y = ash_per_mean)) +
   geom_col(fill = "skyblue") +
-  geom_errorbar(aes(ymin = mean_ash_percent - sd_ash_percent, ymax = mean_ash_percent + sd_ash_percent), width = 0.2) +
+  geom_errorbar(aes(ymin = ash_per_mean - ash_per_se, ymax = ash_per_mean + ash_per_se), width = 0.2) +
   labs(title = "Ash Content by Replicate Group", x = "Replicate Group", y = "Mean Ash %") +
   theme_classic() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
 ash_plot
+
+save_object(ash_plot,
+                filename  = "ash_rep_error_hist",
+                directory = "plots",
+                subdir    = "rep",
+                width     = 8,
+                height    = 6,
+                dpi       = 300)
+
 ```
-
-## Interactive Plot
-
-```{r plotly-bar, results='asis'}
-plotly::ggplotly(ash_plot)
-```
-
-## Save Summary to CSV
-
-```{r export-summary, eval=FALSE}
-write.csv(ash_summary, "ash_summary_by_replicate.csv", row.names = FALSE)

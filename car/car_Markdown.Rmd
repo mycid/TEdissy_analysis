@@ -1,0 +1,127 @@
+---
+author: "Trevor Eakes"
+date: "`r Sys.Date()`"
+title: "car content analysis"
+output: html_document
+params:
+  plot_dir:    "output_car/plots"
+  data_dir:    "output_car/export_data"
+  report_dir:  "output_car/reports"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+## Load script and directories
+```{r}
+# Source script from top-level project folder
+source("../process_plate_run.R")
+#— 1. pull from params (or use defaults)
+plot_dir   <-  "output_car/plots"
+data_dir   <-  "output_car/export_data"
+report_dir <-  "output_car/reports"
+
+#— 2. create all dirs
+walk(
+  c(plot = plot_dir, data = data_dir, reports = report_dir),
+  ~ if (!dir_exists(.x)) dir_create(.x, recurse = TRUE)
+)
+
+#— 3. register plot_dir with knitr
+opts_chunk$set(fig.path = paste0(plot_dir, "/"))
+#
+```
+
+## Load input data
+```{r load-excel-files, warning=FALSE}
+# 1. Define the folder containing all Excel inputs
+input_folder <- "input_car"
+getwd()
+# 2. Find all .xlsx files (full paths), excluding temp files that start with "~$"
+excel_files <- list.files(
+  path = input_folder, 
+  pattern = "\\.xlsx?$", 
+  full.names = TRUE
+)
+excel_files <- excel_files[!grepl("^~\\$", basename(excel_files))]
+
+# 3. Loop over each file
+for (file in excel_files) {
+  # 3a. Create a clean object name (strip out folder & extension)
+  name <- tools::file_path_sans_ext(basename(file))
+  
+  # 3b. Determine which sheet to read (second if possible, otherwise first)
+  sheet_names   <- excel_sheets(file)
+  sheet_to_read <- if (length(sheet_names) >= 2) sheet_names[2] else sheet_names[1]
+  
+  # 3c. Read the chosen sheet, suppressing verbose messages
+  data <- suppressMessages(read_excel(file, sheet = sheet_to_read))
+  
+  # 3d. Assign the data.frame to the global environment under "name"
+  assign(name, data, envir = .GlobalEnv)
+  
+  # 3e. Print a message to confirm successful load
+  message("Loaded: ", name, " (sheet = '", sheet_to_read, "')")
+}
+```
+
+
+## Summary Statistics by Replicate
+
+```{r summary-stats}
+final_export_dir <- file.path("output_car", "export_data", "Samples Analysis Final")
+dir.create(final_export_dir, recursive = TRUE, showWarnings = FALSE)
+
+car_data_dir <- file.path("output_car/export_data", "processed")
+dir.create(car_data_dir, recursive = TRUE, showWarnings = FALSE)
+
+# Join car data with sample metadata
+joindf_by_id(
+  df1          = sample_data,
+  df2          = car_content,
+  save_csv_path  = file.path(final_export_dir, "car_rep_final.csv"),
+  assign_name  = "car_rep_final",
+  key_df1      = "ID",
+  key_df2      = "ID"
+)
+#Filter out empty rows
+car_rep_final <- car_rep_final %>%
+  filter(!is.na(car_per))
+
+# Output directory for replicate analysis plots
+rep_plot_dir <- file.path("output_car", "plots", "replicate_analysis")
+dir.create(rep_plot_dir, recursive = TRUE, showWarnings = FALSE)
+
+
+# Remove F.Glom for Chamissoi analysis
+car_location_cham <- car_rep_final %>%
+  filter(!variety %in% c("F.Glom"))
+
+# Group comparison: Location
+compare_groups(
+  data           = car_location_cham,
+  response_var   = "car_per",
+  group_var      = "Location",
+  subfolder_name = "car_Location_cham"
+)
+
+# Group comparison: Life Stage
+compare_groups(
+  data           = car_location_cham,
+  response_var   = "car_per",
+  group_var      = "Life_S",
+  subfolder_name = "car_Life_S_cham"
+)
+
+# Filter for gametophyte/tetrasporophyte stages
+car_gamtetra <- car_rep_final %>%
+  filter(Life_S %in% c("Gam/Tetra", "Gam", "Tetra"))
+
+compare_groups(
+  data           = car_gamtetra,
+  response_var   = "car_per",
+  group_var      = "Location",
+  subfolder_name = "car_gamtetra_location"
+)
+```

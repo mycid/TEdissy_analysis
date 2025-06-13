@@ -1,0 +1,25 @@
+"Location","variety","Life_S","Variable","N","Mean","SE"
+"Mendieta","C.Cham","Carp","PE_mg_per_g_sample_mean",4,0.0664233352548344,0.0457453282328141
+"Mendieta","C.Cham","Gam/Tetra","PE_mg_per_g_sample_mean",6,0.0274036089816771,0.00786108299553271
+"Mendieta","F. Glom","Carp","PE_mg_per_g_sample_mean",1,0.0301284828527065,NA
+"Mendieta","F. Glom","Gam/Tetra","PE_mg_per_g_sample_mean",5,0.0491873298682451,0.0136805513052192
+"Concession","C.Cham","Gam/Tetra","PE_mg_per_g_sample_mean",6,0.0842659530831357,0.0119545384134281
+"Caro Caido","C.Cham","Carp","PE_mg_per_g_sample_mean",2,0.0265771491416283,0.0083269290250714
+"Caro Caido","C.Cham","Gam/Tetra","PE_mg_per_g_sample_mean",3,0.0531654397223641,0.0157799899656988
+"7H","C.Cham","Gam/Tetra","PE_mg_per_g_sample_mean",1,0.0620422339538761,NA
+"7H","F. Glom","Carp","PE_mg_per_g_sample_mean",3,0.0154569228269259,0.00550755077243033
+"7H","F. Glom","Gam/Tetra","PE_mg_per_g_sample_mean",2,0.00763188733640084,0.00419692109209607
+"Powder Ilo","C.Cham","Unknown","PE_mg_per_g_sample_mean",3,0.101182378835444,0.0218476326114039
+"Ilo mariculture","C.Cham","Gam/Tetra","PE_mg_per_g_sample_mean",3,0.0412849773538528,0.0157586140308987
+"Mendieta","C.Cham","Carp","Protein_mg_per_g_mean",4,36.0302020502872,4.42000590359104
+"Mendieta","C.Cham","Gam/Tetra","Protein_mg_per_g_mean",6,29.5706746165776,2.55119879304921
+"Mendieta","F. Glom","Carp","Protein_mg_per_g_mean",1,47.2658951132739,NA
+"Mendieta","F. Glom","Gam/Tetra","Protein_mg_per_g_mean",5,39.7515545934215,3.39940604130555
+"Concession","C.Cham","Gam/Tetra","Protein_mg_per_g_mean",6,32.7960400460949,3.17575792940072
+"Caro Caido","C.Cham","Carp","Protein_mg_per_g_mean",2,40.2487643149754,3.26590292341055
+"Caro Caido","C.Cham","Gam/Tetra","Protein_mg_per_g_mean",3,32.2809653152863,4.14921477181894
+"7H","C.Cham","Gam/Tetra","Protein_mg_per_g_mean",1,48.1601287169658,NA
+"7H","F. Glom","Carp","Protein_mg_per_g_mean",3,30.0682815791676,0.970594407747866
+"7H","F. Glom","Gam/Tetra","Protein_mg_per_g_mean",2,31.3763629260447,10.7494078451277
+"Powder Ilo","C.Cham","Unknown","Protein_mg_per_g_mean",3,28.3349557017945,0.955361197949473
+"Ilo mariculture","C.Cham","Gam/Tetra","Protein_mg_per_g_mean",3,42.4845838329286,3.20633410504833

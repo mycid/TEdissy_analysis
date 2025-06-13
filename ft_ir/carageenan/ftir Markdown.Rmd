@@ -4,11 +4,9 @@ author: "Trevor"
 date: "2025-06-10"
 output: html_document
 params:
-  # These paths are now relative to the project root directory
-  plot_dir:   "output_ftir/plots"
-  data_dir:   "output_ftir/export_data"
-  # POTENTIAL TYPO: You had "output_ftit". I changed it to "output_ftir" for consistency.
-  report_dir: "output_ftir/reports" 
+  plot_dir:   "ft_ir/carageenan/output_ftir/plots"
+  data_dir:   "ft_ir/carageenan/output_ftir/export_data"
+  report_dir: "ft_ir/output_ftir/reports" 
 ---
 
 ```{r setup, include=FALSE}
@@ -29,16 +27,6 @@ opts_chunk$set(
 # --- 1. Define directory paths using here() ---
 # Pull paths from the YAML params, provide a default, and then wrap in here()
 # to create a full, project-aware path.
-
-# Ensure 'here', 'fs', 'dplyr', 'tidyr', 'readr', 'purrr', 'stringr' are loaded
-# install.packages(c("here", "fs", "dplyr", "tidyr", "readr", "purrr", "stringr")) # Uncomment if not installed
-library(here)
-library(fs)
-library(dplyr)
-library(tidyr)
-library(readr) # For read_csv
-library(purrr) # For map2 and walk
-library(stringr) # For str_detect
 
 # Dummy params list if running outside of a full R Markdown/Quarto project setup
 # In a real project, these would come from your _quarto.yml or _bookdown.yml etc.

@@ -1,0 +1,389 @@
+author: "Trevor Eakes"
+date: "`r Sys.Date()`"
+title: "PCA and PCR proximate nutrient analysis and graphing"
+output: html_document
+params:
+  plot_dir:    "output_all/plots"
+  data_dir:    "output_all/export_data"
+  report_dir:  "output_all/reports"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+## Load script and directories
+```{r}
+# Source script from top-level project folder
+source("../process_plate_run.R")
+
+#— 1. pull from params (or use defaults)
+plot_dir   <-  "output_all/plots"
+data_dir   <-  "output_all/export_data"
+report_dir <-  "output_all/reports"
+
+#— 2. create all dirs
+walk(
+  c(plot = plot_dir, data = data_dir, reports = report_dir),
+  ~ if (!dir_exists(.x)) dir_create(.x, recurse = TRUE)
+)
+
+#— 3. register plot_dir with knitr
+opts_chunk$set(fig.path = paste0(plot_dir, "/"))
+#
+```
+
+## Load input data
+```{r load-excel-files, warning=FALSE}
+# 1. Define the folder containing all input files
+input_folder <- "input_all"
+
+# 2. List all Excel and CSV files (full paths), excluding temp Excel files (~$)
+all_files <- list.files(
+  path = input_folder,
+  pattern = "\\.(xlsx|csv)$",
+  full.names = TRUE
+)
+all_files <- all_files[!grepl("^~\\$", basename(all_files))]
+
+# 3. Loop over each file
+for (file in all_files) {
+  # 3a. Create a clean object name (strip out folder & extension)
+  name <- file_path_sans_ext(basename(file))
+
+  # 3b. Determine file type
+  if (grepl("\\.xlsx$", file)) {
+    # Read Excel file (2nd sheet if available, else 1st)
+    sheet_names   <- excel_sheets(file)
+    sheet_to_read <- if (length(sheet_names) >= 2) sheet_names[2] else sheet_names[1]
+    data <- suppressMessages(read_excel(file, sheet = sheet_to_read))
+    message("Loaded Excel file: ", name, " (sheet = '", sheet_to_read, "')")
+  } else if (grepl("\\.csv$", file)) {
+    # Read CSV file
+    data <- suppressMessages(read_csv(file, show_col_types = FALSE))
+    message("Loaded CSV file: ", name)
+  }
+
+  # 3c. Assign the data.frame to the global environment under "name"
+  assign(name, data, envir = .GlobalEnv)
+}
+```
+## Make the factors and color levels
+```{r}
+# For Life Stage
+
+#Code to collapse factors
+desired_location_order <- c("Mendieta", "Concession", "Caro Caido", "7H", "Powder Ilo", "Ilo mariculture")
+life_s_levels           <- c("Carp", "Gam", "Gam/Tetra", "Tetra", "Unknown")
+
+# Harmonized Colors
+group_colors <- c(
+  # Location colors
+  "Mendieta"        = "#66c2a5",  # muted green
+  "Concession"      = "#66e2a5",  # same as Mendieta
+  "Caro Caido"      = "#fc8d62",  # coral orange
+  "7H"              = "#8da0cb",  # soft blue
+  "Powder Ilo"      = "#e78ac3",  # pink
+  "Ilo mariculture" = "#a6d854",  # lime green
+
+  # Life Stage colors
+  "Carp"       = "#ffd92f",  # yellow
+  "Gam"        = "#e5c494",  # tan
+  "Gam/Tetra"  = "#b3f3b3",  # gray
+  "Tetra"      = "#a6cee3",  # light blue
+  "Unknown"    = "#cab2d6"   # lavender
+)
+pe_rep_final$Life_S <- fct_collapse(pe_rep_final$Life_S, "Gam/Tetra" = c("Gam", "Tetra"))
+pe_rep_final$Life_S <- factor(pe_rep_final$Life_S, levels = life_s_levels)
+
+pr_rep_final$Life_S <- fct_collapse(pr_rep_final$Life_S, "Gam/Tetra" = c("Gam", "Tetra"))
+pr_rep_final$Life_S <- factor(pr_rep_final$Life_S, levels = c("Carp", "Gam/Tetra", "Unknown"))
+
+carb_rep_final$Life_S <- fct_collapse(carb_rep_final$Life_S, "Gam/Tetra" = c("Gam", "Tetra"))
+carb_rep_final$Life_S <- factor(carb_rep_final$Life_S, levels = c("Carp", "Gam/Tetra", "Unknown"))
+
+car_rep_final$Life_S <- fct_collapse(car_rep_final$Life_S, "Gam/Tetra" = c("Gam", "Tetra"))
+car_rep_final$Life_S <- factor(car_rep_final$Life_S, levels = c("Carp", "Gam/Tetra", "Unknown"))
+
+ash_rep_final$Life_S <- fct_collapse(ash_rep_final$Life_S, "Gam/Tetra" = c("Gam", "Tetra"))
+ash_rep_final$Life_S <- factor(ash_rep_final$Life_S, levels = c("Carp", "Gam/Tetra", "Unknown"))
+
+
+# repeat as needed
+
+# For Location (example)
+desired_location_order <- c("Mendieta", "Concession", "Caro Caido", "7H", "Powder Ilo", "Ilo mariculture"  )  # or whatever order you want
+
+pr_rep_final$Location <- factor(pr_rep_final$Location, levels = desired_location_order)
+carb_rep_final$Location <- factor(carb_rep_final$Location, levels = desired_location_order)
+ash_rep_final$Location <- factor(ash_rep_final$Location, levels = desired_location_order)
+car_rep_final$Location <- factor(car_rep_final$Location, levels = desired_location_order)
+pe_rep_final$Location <- factor(pe_rep_final$Location, levels = desired_location_order)
+
+# Define factor levels and color palette
+  # or locations
+
+```
+
+## Make the plots
+```{r}
+########################## subset protein
+# Protein
+pr_location <- pr_rep_final %>%
+  filter(!Location %in% c("Lima Market Freeze Dry", "Ilo Freeze Dry", "Ilo oven dry", "Ilo Fresh", "Lima Market Fresh"))
+
+pr_location_cham <- pr_rep_final %>%
+  filter(!variety %in% c("F.Glom"))
+
+########################## Subset PE
+pe_location <- pe_rep_final %>%
+  filter(!Location %in% c("Lima Market Freeze Dry", "Ilo Freeze Dry", "Ilo oven dry", "Ilo Fresh", "Lima Market Fresh"))
+
+pe_location_cham <- pe_rep_final %>%
+  filter(!variety %in% c("F.Glom"))
+# 6. Run group comparisons and print outputs
+
+
+# Apply color palette
+group_colors <- c(
+  # Location colors
+  "Mendieta"        = "#66c2a5",
+  "Concession"      = "#66c2a5",
+  "Caro Caido"      = "#fc8d62",
+  "7H"              = "#8da0cb",
+  "Powder Ilo"      = "#e78ac3",
+  "Ilo mariculture" = "#a6d854",
+  # Life Stage colors
+  "Carp"       = "#ffd92f",
+  "Gam"        = "#e5c494",
+  "Gam/Tetra"  = "#b3b3b3",
+  "Tetra"      = "#a6cee3",
+  "Unknown"    = "#cab2d6"
+)
+
+################################################### Location + Life Stage plots
+
+# ---- Protein ----
+prot_plot_LS <- compare_groups(
+  data           = pr_location_cham,
+  response_var   = "Protein_mg_per_g_mean",
+  group_var      = "Life_S",
+  subfolder_name = "Protein_LifeS"
+) + scale_fill_manual(values = group_colors) +
+    scale_color_manual(values = group_colors)
+
+prot_plot_LOC <- compare_groups(
+  data           = pr_location_cham,
+  response_var   = "Protein_mg_per_g_mean",
+  group_var      = "region",
+  subfolder_name = "Protein_region"
+) + scale_fill_manual(values = group_colors) +
+    scale_color_manual(values = group_colors)
+
+# ---- Phycoerythrin ----
+pe_plot_LS <- compare_groups(
+  data           = pe_location_cham,
+  response_var   = "PE_mg_per_g_sample_mean",
+  group_var      = "Life_S",
+  subfolder_name = "PE_LifeS"
+) + scale_fill_manual(values = group_colors) +
+    scale_color_manual(values = group_colors)
+
+pe_plot_LOC <- compare_groups(
+  data           = pe_location_cham,
+  response_var   = "PE_mg_per_g_sample_mean",
+  group_var      = "region",
+  subfolder_name = "PE_region"
+) + scale_fill_manual(values = group_colors) +
+    scale_color_manual(values = group_colors)
+
+# ---- Ash ----
+ash_plot_LS <- compare_groups(
+  data           = ash_rep_final,
+  response_var   = "ash_per_mean",
+  group_var      = "Life_S",
+  subfolder_name = "Ash_LifeS"
+) + scale_fill_manual(values = group_colors) +
+    scale_color_manual(values = group_colors)
+
+ash_plot_LOC <- compare_groups(
+  data           = ash_rep_final,
+  response_var   = "ash_per_mean",
+  group_var      = "region",
+  subfolder_name = "Ash_region"
+) + scale_fill_manual(values = group_colors) +
+    scale_color_manual(values = group_colors)
+
+# ---- Carbohydrates ----
+carb_plot_LS <- compare_groups(
+  data           = carb_rep_final,
+  response_var   = "carb_mg_per_g_mean",
+  group_var      = "Life_S",
+  subfolder_name = "Carbohydrates_LifeS"
+) + scale_fill_manual(values = group_colors) +
+    scale_color_manual(values = group_colors)
+
+carb_plot_LOC <- compare_groups(
+  data           = carb_rep_final,
+  response_var   = "carb_mg_per_g_mean",
+  group_var      = "region",
+  subfolder_name = "Carbohydrates_region"
+) + scale_fill_manual(values = group_colors) +
+    scale_color_manual(values = group_colors)
+
+# ---- Carrageenan ----
+car_plot_LS <- compare_groups(
+  data           = car_rep_final,
+  response_var   = "car_per",
+  group_var      = "Life_S",
+  subfolder_name = "Carrageenan_LifeS"
+) + scale_fill_manual(values = group_colors) +
+    scale_color_manual(values = group_colors)
+
+car_plot_LOC <- compare_groups(
+  data           = car_rep_final,
+  response_var   = "car_per",
+  group_var      = "region",
+  subfolder_name = "Carrageenan_region"
+) + scale_fill_manual(values = group_colors) +
+    scale_color_manual(values = group_colors)
+
+```
+
+## Make lists of the plots
+```{r}
+# Nutrients (rows)
+nutrients <- c("Protein", "Carbohydrates", "ash", "Carrageenan", "Phycoerythrin")
+
+# Two grouping variables (columns): Life_Stage and region
+# You should have 10 plots in total
+plots_lifestage <- list(prot_plot_LS, carb_plot_LS, ash_plot_LS, car_plot_LS, pe_plot_LS)
+plots_region  <- list(prot_plot_LOC, carb_plot_LOC, ash_plot_LS, car_plot_LOC, pe_plot_LOC )
+
+```
+
+
+
+#Assemble the panel
+```{r}
+
+# 1) Your unified color palette (unchanged)
+group_colors <- c(
+  "Mendieta"        = "#66c2a5", "Concession"      = "#66c2a5",
+  "Caro Caido"      = "#fc8d62", "7H"              = "#8da0cb",
+  "Powder Ilo"      = "#e78ac3", "Ilo mariculture" = "#a6d854",
+  "Carp"            = "#ffd92f", "Gam"             = "#e5c494",
+  "Gam/Tetra"       = "#b3b3b3", "Tetra"           = "#a6cee3",
+  "Unknown"         = "#cab2d6"
+)
+
+# Function to apply general styling (strips x-axis labels, handles y-axis)
+style_plot_general <- function(p, col) {
+  p +
+    # Harmonized colors, but no legend titles
+    scale_fill_manual(values = group_colors, guide = "none") +
+    scale_color_manual(values = group_colors, guide = "none") +
+
+    theme_minimal(base_size = 14) + # Increased base_size for overall visibility
+    theme(
+      plot.title         = element_blank(), # No individual plot titles
+
+      # Axis titles:
+      # x-axis title only on the very bottom plot (handled outside this function now)
+      axis.title.x       = element_blank(), # Set to blank here for all plots
+      # y-axis title only on the left column (col 1)
+      axis.title.y       = if (col == 1) element_text(size = 18, face = "bold", margin = margin(r = 15)) else element_blank(),
+
+      # Axis text (tick labels):
+      # Crucial: set x-axis text to blank for ALL individual plots initially
+      axis.text.x        = element_blank(),
+      axis.text.y        = element_text(size = 14), # Keep y-axis text visible and larger
+      axis.ticks.x       = element_blank(), # Hide x-axis ticks for all
+      axis.ticks.y       = element_line(size = 0.5), # Keep y-axis ticks
+      axis.line.x        = element_blank(), # Hide x-axis line for all
+      axis.line.y        = element_line(size = 0.5), # Keep y-axis line
+
+      # Remove all legends from individual plots
+      legend.position    = "none",
+      panel.grid.major.x = element_blank(), # Hide vertical grid lines
+      panel.grid.minor.x = element_blank()  # Hide minor vertical grid lines
+    )
+}
+
+# Function to apply specific styling for the bottom row (re-enables x-axis labels)
+style_plot_bottom_row <- function(p) {
+  p +
+    theme(
+      axis.title.x = element_text(size = 18, face = "bold", margin = margin(t = 15)), # Re-enable x-axis title for bottom
+      axis.text.x  = element_text(size = 14, angle = 45, hjust = 1, vjust = 1, color = "black"), # Make larger, rotate, ensure black
+      axis.ticks.x = element_line(size = 0.5, color = "black"), # Re-enable x-axis ticks
+      axis.line.x  = element_line(size = 0.5, color = "black") # Re-enable x-axis line
+    )
+}
+
+# 3) Apply general styling to all plots first
+# Note: purrr::imap gives .x (element) and .y (index/name)
+plots_lifestage <- purrr::imap(plots_lifestage,
+  ~ style_plot_general(.x, col = 1)
+)
+plots_region <- purrr::imap(plots_region,
+  ~ style_plot_general(.x, col = 2)
+)
+
+# 4) Now, specifically apply the bottom row styling to the last plot in each list
+# Assuming 5 rows, the last plot is at index 5.
+num_rows <- length(plots_lifestage) # Get the number of rows dynamically
+
+plots_lifestage[[num_rows]] <- style_plot_bottom_row(plots_lifestage[[num_rows]])
+plots_region[[num_rows]] <- style_plot_bottom_row(plots_region[[num_rows]])
+
+# 5) Combine the plots horizontally for each row
+rows_combined <- purrr::map2(plots_lifestage, plots_region, `+`)
+
+# 6) Stack the combined rows vertically to form the full panel
+full_panel <- wrap_plots(rows_combined, ncol = 1)
+
+# 7) Final check: Ensure no legends are present in the combined panel
+full_panel <- full_panel & theme(legend.position = "none")
+
+# 8) Save high-res
+ggsave(
+  "output_all/plots/full_panel2.png",
+  full_panel,
+  width  = 14,    # inches
+  height = 20,
+  dpi    = 300
+)
+```
+#Legend game
+```{r}
+library(cowplot)
+
+# Fix legend names in the bottom row plots
+legend_life_stage_plot <- plots_lifestage[[5]] +
+  scale_fill_manual(values = group_colors, name = "Life Stage") +
+  scale_color_manual(values = group_colors, name = "Life Stage") +
+  theme(legend.position = "right")
+
+legend_region_plot <- plots_region[[5]] +
+  scale_fill_manual(values = group_colors, name = "region") +
+  scale_color_manual(values = group_colors, name = "region") +
+  theme(legend.position = "right")
+
+#legend_life_stage <- get_legend(legend_life_stage_plot)
+legend_life_stage <- get_legend(legend_life_stage_plot)
+legend_region   <- get_legend(legend_region_plot)
+#
+# Save Life Stage legend
+ggsave("output_all/plots/legend_life_stage.png",
+       plot = plot_grid(legend_life_stage),
+       width = 4, height = 3, dpi = 300, bg = "white")
+
+# Save region legend
+ggsave("output_all/plots/legend_region.png",
+       plot = plot_grid(legend_region),
+       width = 4, height = 3, dpi = 300, bg = "white")
+
+
+```
+

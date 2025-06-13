@@ -1,30 +1,254 @@
 ---
-title: "carb_analy"
 author: "Trevor Eakes"
 date: "`r Sys.Date()`"
+title: "carb Content Analysis using the modified phenol-sulphuric acid  Method"
 output: html_document
+params:
+  plot_dir:    "output_carb/plots"
+  data_dir:    "output_carb/export_data"
+  report_dir:  "output_carb/reports"
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
 ```
 
-## R Markdown
+## Load script and directories
+```{r}
+# Source script from top-level project folder
+source("../process_plate_run.R")
+#— 1. pull from params (or use defaults)
+plot_dir   <-  "output_carb/plots"
+data_dir   <-  "output_carb/export_data"
+report_dir <-  "output_carb/reports"
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+#— 2. create all dirs
+walk(
+  c(plot = plot_dir, data = data_dir, reports = report_dir),
+  ~ if (!dir_exists(.x)) dir_create(.x, recurse = TRUE)
+)
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-summary(cars)
+#— 3. register plot_dir with knitr
+opts_chunk$set(fig.path = paste0(plot_dir, "/"))
+#
 ```
 
-## Including Plots
+## Load input data
+```{r load-excel-files, warning=FALSE}
+# 1. Define the folder containing all Excel inputs
+input_folder <- "input_carb"
 
-You can also embed plots, for example:
+# 2. Find all .xlsx files (full paths), excluding temp files that start with "~$"
+excel_files <- list.files(
+  path = input_folder, 
+  pattern = "\\.xlsx?$", 
+  full.names = TRUE
+)
+excel_files <- excel_files[!grepl("^~\\$", basename(excel_files))]
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+# 3. Loop over each file
+for (file in excel_files) {
+  # 3a. Create a clean object name (strip out folder & extension)
+  name <- tools::file_path_sans_ext(basename(file))
+  
+  # 3b. Determine which sheet to read (second if possible, otherwise first)
+  sheet_names   <- excel_sheets(file)
+  sheet_to_read <- if (length(sheet_names) >= 2) sheet_names[2] else sheet_names[1]
+  
+  # 3c. Read the chosen sheet, suppressing verbose messages
+  data <- suppressMessages(read_excel(file, sheet = sheet_to_read))
+  
+  # 3d. Assign the data.frame to the global environment under "name"
+  assign(name, data, envir = .GlobalEnv)
+  
+  # 3e. Print a message to confirm successful load
+  message("Loaded: ", name, " (sheet = '", sheet_to_read, "')")
+}
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+## weightsulate calibration
+
+```{r standard-curve, message=FALSE, warning=FALSE}
+
+# Example data: Replace this with your actual data
+# You can also use `read.csv("your_data.csv")` if loading from a file
+
+# Fit linear model
+model <- lm(absorbance ~ Glucose, data = carb_curve)
+
+# Summary of the model (for table output, if needed)
+summary(model)
+
+# Plot
+carb_curve_plot <- ggplot(carb_curve, aes(x = absorbance, y = Glucose)) +
+  geom_point(size = 3) +
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +
+  labs(
+    title = "Glucose standard curve (sulphuric acid phenol method)",
+    x = "Carbohydrate Concentration (mg/ml)",
+    y = "Absorbance (600 nm)"
+  ) +
+  annotate(
+    "text",
+    x = max(carb_curve$Glucose) * 0.5, 
+    y = max(carb_curve$absorbance) * 0.9,
+    label = paste0("y = ", round(coef(model)[2], 4), "x + ", round(coef(model)[1], 4),
+                   "\nR² = ", round(summary(model)$r.squared, 4)),
+    size = 4, hjust = 0
+  ) +
+  theme_minimal()
+save_object(carb_curve_plot,
+            filename  = "carb_standard_curve",
+            directory = "plots",
+            width     = 6,
+            height    = 5,
+            dpi       = 300)
+print(carb_curve_plot)
+```
+## Calculate carb concentration with standard curve regression
+```{r}
+# Use the regression model to predict concentration from absorbance
+export_dir <- "output_carb/export_data"
+plot_dir <- file.path("output_carb", "plots")
+dir.create(export_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(plot_dir, recursive = TRUE, showWarnings = FALSE)
+
+# ---- Step 1: Calibration
+intercept <- coef(model)[1]
+slope     <- coef(model)[2]
+
+carb_weights$con_mg_per_ml <- (carb_weights$absorbance - intercept) / slope
+carb_weights$carb_mg_total <- carb_weights$con_mg_per_ml * 0.5
+carb_weights$carb_mg_per_g <- (carb_weights$carb_mg_total / carb_weights$weights) * 1000
+
+# Save calc data
+write_csv(carb_weights, file.path(export_dir, "carb_weights.csv"))
+
+
+
+iqr_vals <- IQR(carb_weights$carb_mg_per_g, na.rm = TRUE)
+q1 <- quantile(carb_weights$carb_mg_per_g, 0.25, na.rm = TRUE)
+q3 <- quantile(carb_weights$carb_mg_per_g, 0.75, na.rm = TRUE)
+lower_bound <- q1 - 1.5 * iqr_vals
+upper_bound <- q3 + 1.5 * iqr_vals
+
+carb_weights <- carb_weights %>%
+  mutate(outlier_flag = ifelse(
+    carb_mg_per_g < lower_bound | carb_mg_per_g > upper_bound,
+    "outlier", "normal"
+  ))
+
+# Save outlier-flagged data
+write_csv(carb_weights, file.path(export_dir, "carb_weights_with_outliers.csv"))
+
+carb_weights_clean <- carb_weights %>% filter(outlier_flag == "normal")
+write_csv(carb_weights_clean, file.path(export_dir, "carb_weights_clean.csv"))
+
+# ---- Step 8: Replicate analysis
+carb_rep_analy <- analyze_replicates(
+  data          = carb_weights_clean,
+  id_col        = "ID",
+  weight_col    = "weights",
+  date_col      = "date",
+  output_prefix = "carb_rep",
+  choose_best_3 = TRUE,
+  dir           = export_dir
+)
+
+
+carb_var     <- "carb_mg_per_g"
+se_col_name     <- paste0(carb_var, "_se")
+mean_col_name   <- paste0(carb_var, "_mean")
+
+output_prefix <- file.path(plot_dir, "replicate_analysis", paste0(carb_var, "_replicate_analysis"))
+dir.create(dirname(output_prefix), recursive = TRUE, showWarnings = FALSE)
+
+carb_rep_error <- graph_histograms_with_error(
+    carb_rep_analy,
+    "carb_mg_per_g_mean",
+    id_col = "ID",
+    output_prefix = "histogram_analysis"
+)
+
+save_object(
+  object    = carb_rep_error,
+  filename  = paste0("carb", "_replicate_plot"),
+  directory = "plots"
+)
+
+# ---- Step 10: Summary stats
+summary_stats <- carb_rep_analy %>%
+  summarise(
+    total_rows       = n(),
+    high_cv_count    = sum(carb_mg_per_g_cv > 0.2, na.rm = TRUE),
+    average_cv       = mean(carb_mg_per_g_cv, na.rm = TRUE),
+    high_cv_percent  = mean(carb_mg_per_g_cv > 0.2, na.rm = TRUE) * 100
+  )
+
+write_csv(summary_stats, file.path(export_dir, "carb_summary_stats.csv"))
+
+# Also print to console (optional)
+print(summary_stats)
+
+```
+## Summary Statistics by Replicate
+
+```{r summary-stats}
+final_export_dir <- file.path("output_carb", "export_data", "Samples Analysis Final")
+dir.create(final_export_dir, recursive = TRUE, showWarnings = FALSE)
+
+carb_data_dir <- file.path("output_carb/export_data", "processed")
+dir.create(carb_data_dir, recursive = TRUE, showWarnings = FALSE)
+
+# Join carb data with sample metadata
+joindf_by_id(
+  df1          = carb_rep_analy,
+  df2          = sample_data_limited,
+  save_csv_path  = file.path(final_export_dir, "carb_rep_final.csv"),
+  assign_name  = "carb_rep_final",
+  key_df1      = "ID",
+  key_df2      = "ID"
+)
+
+carb_rep_final <- carb_rep_final %>%
+  filter(!is.na(carb_mg_per_g_mean))
+
+# Output directory for replicate analysis plots
+rep_plot_dir <- file.path("output_carb", "plots", "replicate_analysis")
+dir.create(rep_plot_dir, recursive = TRUE, showWarnings = FALSE)
+
+carb_location <- carb_rep_final %>%
+  filter(!Location %in% c("Lima Market Freeze Dry", "Ilo Freeze Dry", "Ilo oven dry", "Ilo Fresh", "Lima Market Fresh"))
+
+# Remove F.Glom for Chamissoi analysis
+carb_location_cham <- carb_rep_final %>%
+  filter(!variety %in% c("F.Glom"))
+
+# Group comparison: Location
+compare_groups(
+  data           = carb_location_cham,
+  response_var   = "carb_mg_per_g_mean",
+  group_var      = "Location",
+  subfolder_name = "carb_Location_cham"
+)
+
+# Group comparison: Life Stage
+compare_groups(
+  data           = carb_location_cham,
+  response_var   = "carb_mg_per_g_mean",
+  group_var      = "Life_S",
+  subfolder_name = "carb_Life_S_cham"
+)
+
+# Filter for gametophyte/tetrasporophyte stages
+carb_gamtetra <- carb_location %>%
+  filter(Life_S %in% c("Gam/Tetra", "Gam", "Tetra"))
+
+compare_groups(
+  data           = carb_gamtetra,
+  response_var   = "carb_mg_per_g_mean",
+  group_var      = "Location",
+  subfolder_name = "carb_gamtetra_location"
+)
+```
+
