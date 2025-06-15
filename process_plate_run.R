@@ -39,7 +39,8 @@ required_packages <- c(
   "FactoMineR",
   "gt",
   "rstatix",
-  "PMCMRplus"
+  "PMCMRplus",
+  "writexl"
 )
 for(pkg in required_packages) {
   if (!requireNamespace(pkg, quietly = TRUE)) {
@@ -832,33 +833,35 @@ analyze_replicates <- function(data,
 
 # This function is designed to perform group comparisons and generate plots.
 # It requires the 'rstatix', 'PMCMRplus', and 'multcompView' packages for full functionality.
+# You might need to add:
+
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
 compare_groups <- function(data,
                            response_var,
                            group_var,
-                           facet_var  = NULL,
+                           facet_var = NULL,
                            subfolder_name = NULL) {
-  # Load required packages (assuming they are installed in the main script)
-  # You might need to add:
-  # library(rstatix)
-  # library(PMCMRplus)
-  # library(multcompView)
   
   # Use global params for base dirs (assuming they are defined in the Rmd environment)
-  # These variables (plot_dir, report_dir, data_dir) need to be defined in your RMarkdown setup chunk.
-  # For example:
-  # plot_dir <- "output/plots"
-  # report_dir <- "output/reports"
-  # data_dir <- "output/data"
-  
-  base_plot_dir   <- if(exists("plot_dir")) plot_dir else "output/plots"
-  base_report_dir <- if(exists("report_dir")) report_dir else "output/reports"
-  base_data_dir   <- if(exists("data_dir")) data_dir else "output/data"
+  base_plot_dir <- if (exists("plot_dir")) plot_dir else "output/plots"
+  base_report_dir <- if (exists("report_dir")) report_dir else "output/reports"
+  base_data_dir <- if (exists("data_dir")) data_dir else "output/data"
   
   # If subfolder name is provided, append it to each base dir
   if (!is.null(subfolder_name)) {
-    base_plot_dir   <- file.path(base_plot_dir, subfolder_name)
+    base_plot_dir <- file.path(base_plot_dir, subfolder_name)
     base_report_dir <- file.path(base_report_dir, subfolder_name)
-    base_data_dir   <- file.path(base_data_dir, subfolder_name)
+    base_data_dir <- file.path(base_data_dir, subfolder_name)
     dir.create(base_plot_dir, recursive = TRUE, showWarnings = FALSE)
     dir.create(base_report_dir, recursive = TRUE, showWarnings = FALSE)
     dir.create(base_data_dir, recursive = TRUE, showWarnings = FALSE)
@@ -869,11 +872,10 @@ compare_groups <- function(data,
     x %>% str_replace_all("[^a-zA-Z0-9]+", "_") %>% str_remove_all("_$") %>% str_remove_all("^_")
   }
   
-  # Compact letter display helper
+  # Compact letter display helper (unchanged)
   generate_group_letters <- function(posthoc_df, p_adj_col = "p adj", comparison_col = "comparison") {
     comps <- str_split_fixed(posthoc_df[[comparison_col]], "-", 2)
-    pvals <- setNames(posthoc_df[[p_adj_col]], paste(comps[,1], comps[,2], sep = "-"))
-    # multcompLetters requires p-values to be numeric
+    pvals <- setNames(posthoc_df[[p_adj_col]], paste(comps[, 1], comps[, 2], sep = "-"))
     pvals_numeric <- as.numeric(pvals)
     names(pvals_numeric) <- names(pvals)
     cld <- multcompLetters(pvals_numeric)
@@ -881,57 +883,69 @@ compare_groups <- function(data,
   }
   
   response_sym <- sym(response_var)
-  group_sym    <- sym(group_var)
+  group_sym <- sym(group_var)
   if (!is.null(facet_var)) facet_sym <- sym(facet_var)
   
+  # Prepare the data once for all analyses and plotting
   df <- data %>%
     mutate(
-      !!group_sym    := factor(!!group_sym, levels = unique(data[[group_var]])),
+      !!group_sym := factor(!!group_sym, levels = unique(data[[group_var]])),
       !!response_sym := as.numeric(!!response_sym)
     ) %>%
     filter(!is.na(!!response_sym), !is.na(!!group_sym))
   
   if (nrow(df) == 0) {
-    message("No valid data points after filtering for response and group variables. Skipping analysis.")
-    return(invisible(list()))
+    message("No valid data points after filtering for response and group variables. Returning NULL plot.")
+    return(NULL) # Return NULL directly if no data
   }
   
-  
+  # Split data for statistical analysis (if faceting)
   if (!is.null(facet_var)) {
     if (!facet_var %in% names(df)) {
       stop(paste0("Error: 'facet_var' (", facet_var, ") not found in the data."))
     }
-    df_split     <- df %>% group_split(!!facet_sym)
+    df_split <- df %>% group_by(!!facet_sym) %>% group_split() # Use group_by then group_split
     facet_levels <- df %>% pull(!!facet_sym) %>% as.character() %>% unique()
   } else {
-    df_split     <- list(df)
-    facet_levels <- "ALL"
+    df_split <- list(df) # Treat as a list with one element if no faceting
+    facet_levels <- "ALL" # A placeholder for a single, non-faceted plot
   }
   
   clean_response <- clean_name(response_var)
-  clean_group    <- clean_name(group_var)
+  clean_group <- clean_name(group_var)
   
-  all_results <- list()
+  # These will hold collected data for the single combined plot
+  all_cld_data_for_plot <- list()
+  all_results <- list() # Still collect results internally for saving
   
+  # --- Loop for statistical analysis and saving results ---
   for (i in seq_along(df_split)) {
-    sub_df     <- df_split[[i]]
-    facet_name <- clean_name(facet_levels[i]) # Clean facet name for file saving
+    sub_df <- df_split[[i]]
+    facet_name <- facet_levels[i] # Original facet name
+    clean_facet_name <- clean_name(facet_name) # Cleaned for file paths
     
+    # Skip if sub_df is empty after filtering
+    if (nrow(sub_df) == 0) {
+      message(paste0("No data for facet '", facet_name, "'. Skipping analysis for this facet."))
+      next
+    }
+    
+    # Summary Table
     summary_tbl <- sub_df %>%
       group_by(!!group_sym) %>%
       summarise(
         n = n(),
         mean = mean(!!response_sym, na.rm = TRUE),
-        sd   = sd(!!response_sym, na.rm = TRUE),
+        sd = sd(!!response_sym, na.rm = TRUE),
         median = median(!!response_sym, na.rm = TRUE),
-        IQR    = IQR(!!response_sym, na.rm = TRUE),
+        IQR = IQR(!!response_sym, na.rm = TRUE),
         .groups = "drop"
       )
-    # save_object function would need to be defined or replaced with write_csv
-    write_csv(summary_tbl, file.path(base_data_dir, paste0("summary_", clean_name(facet_name), ".csv")))
-    message(paste0("Summary table saved for facet '", facet_name, "' to ", file.path(base_data_dir, paste0("summary_", clean_name(facet_name), ".csv"))))
+    write_csv(summary_tbl, file.path(base_data_dir, paste0("summary_", clean_facet_name, ".csv")))
+    message(paste0("Summary table saved for facet '", facet_name, "' to ", file.path(base_data_dir, paste0("summary_", clean_facet_name, ".csv"))))
     
-    ng <- nlevels(factor(sub_df[[group_var]])) # Recalculate nlevels for sub_df
+    # Statistical Tests
+    ng <- nlevels(factor(sub_df[[group_var]]))
     test_results <- NULL
     posthoc_results <- NULL
     group_letters <- NULL
@@ -940,131 +954,160 @@ compare_groups <- function(data,
       fmla <- as.formula(paste(response_var, "~", group_var))
       t_res <- t.test(fmla, data = sub_df)
       w_res <- wilcox.test(fmla, data = sub_df)
-      d     <- cohens_d(fmla, data = sub_df) # From rstatix
+      d <- cohens_d(fmla, data = sub_df)
       
       test_results <- tibble(
-        test        = c("t.test", "wilcox.test"),
-        statistic   = c(t_res$statistic, w_res$statistic),
-        df          = c(t_res$parameter, NA),
-        p_value     = c(t_res$p.value, w_res$p.value),
+        test = c("t.test", "wilcox.test"),
+        statistic = c(t_res$statistic, w_res$statistic),
+        df = c(t_res$parameter, NA),
+        p_value = c(t_res$p.value, w_res$p.value),
         effect_size = c(d$Cohens_d, NA),
-        CI_lower    = c(t_res$conf.int[1], NA),
-        CI_upper    = c(t_res$conf.int[2], NA)
+        CI_lower = c(t_res$conf.int[1], NA),
+        CI_upper = c(t_res$conf.int[2], NA)
       )
-    } else if (ng > 2) { # Only run ANOVA/Kruskal-Wallis if more than 2 groups
+    } else if (ng > 2) {
       fmla <- as.formula(paste(response_var, "~", group_var))
       aov_res <- aov(fmla, data = sub_df)
-      kw_res  <- kruskal.test(fmla, data = sub_df)
+      kw_res <- kruskal.test(fmla, data = sub_df)
       
-      eta2    <- eta_squared(aov_res) # From rstatix
-      r_eta <- rank_eta_squared(fmla, data = sub_df) # From rstatix
+      eta2 <- eta_squared(aov_res)
+      r_eta <- rank_eta_squared(fmla, data = sub_df)
       
       test_results <- tibble(
-        test        = c("ANOVA", "Kruskal-Wallis"),
-        statistic   = c(summary(aov_res)[[1]]$`F value`[1], kw_res$statistic),
-        df          = c(paste(summary(aov_res)[[1]]$Df[1], summary(aov_res)[[1]]$Df[2], sep = ", "), kw_res$parameter),
-        p_value     = c(summary(aov_res)[[1]]$`Pr(>F)`[1], kw_res$p.value),
+        test = c("ANOVA", "Kruskal-Wallis"),
+        statistic = c(summary(aov_res)[[1]]$`F value`[1], kw_res$statistic),
+        df = c(paste(summary(aov_res)[[1]]$Df[1], summary(aov_res)[[1]]$Df[2], sep = ", "), kw_res$parameter),
+        p_value = c(summary(aov_res)[[1]]$`Pr(>F)`[1], kw_res$p.value),
         effect_size = c(as.numeric(eta2)[1], r_eta$Rank_Eta2[1]),
-        CI_lower    = NA,
-        CI_upper    = NA
+        CI_lower = NA,
+        CI_upper = NA
       )
       
       if (summary(aov_res)[[1]]$`Pr(>F)`[1] < 0.05) {
         tukey <- TukeyHSD(aov_res)
         posthoc_results <- as.data.frame(tukey[[1]]) %>%
-          tibble::rownames_to_column(var = "comparison") %>% # Convert row names to a column
+          tibble::rownames_to_column(var = "comparison") %>%
           rename(
-            `p adj` = `p adj` # Rename for clarity, if needed, ensure this matches posthoc_df structure for generate_group_letters
+            `p adj` = `p adj`
           )
-        
         group_letters <- generate_group_letters(posthoc_results, p_adj_col = "p adj", comparison_col = "comparison")
       } else if (kw_res$p.value < 0.05) {
-        # Using pairwise.wilcox.test for Kruskal-Wallis post-hoc
         ph <- pairwise.wilcox.test(sub_df[[response_var]], sub_df[[group_var]], p.adjust.method = "BH")
         posthoc_results <- as.data.frame(as.table(ph$p.value)) %>%
           filter(!is.na(Freq)) %>%
-          rename(comparison_1 = Var1, comparison_2 = Var2, `p adj` = Freq) %>% # Rename Freq to p adj
-          unite(col = "comparison", comparison_1, comparison_2, sep = "-") # Create a 'comparison' column
+          rename(comparison_1 = Var1, comparison_2 = Var2, `p adj` = Freq) %>%
+          unite(col = "comparison", comparison_1, comparison_2, sep = "-")
         group_letters <- generate_group_letters(posthoc_results, p_adj_col = "p adj", comparison_col = "comparison")
       }
     } else {
       message(paste0("Only 1 group (", ng, ") for ", response_var, " by ", group_var, " in facet ", facet_name, ". Skipping tests and post-hoc analysis."))
     }
     
-    write_csv(test_results, file.path(base_data_dir, paste0("tests_", clean_name(facet_name), ".csv")))
-    message(paste0("Test results saved for facet '", facet_name, "' to ", file.path(base_data_dir, paste0("tests_", clean_name(facet_name), ".csv"))))
+    write_csv(test_results, file.path(base_data_dir, paste0("tests_", clean_facet_name, ".csv")))
+    message(paste0("Test results saved for facet '", facet_name, "' to ", file.path(base_data_dir, paste0("tests_", clean_facet_name, ".csv"))))
     
     if (!is.null(posthoc_results)) {
-      write_csv(posthoc_results, file.path(base_data_dir, paste0("posthoc_", clean_name(facet_name), ".csv")))
-      message(paste0("Posthoc results saved for facet '", facet_name, "' to ", file.path(base_data_dir, paste0("posthoc_", clean_name(facet_name), ".csv"))))
+      write_csv(posthoc_results, file.path(base_data_dir, paste0("posthoc_", clean_facet_name, ".csv")))
+      message(paste0("Posthoc results saved for facet '", clean_facet_name, "' to ", file.path(base_data_dir, paste0("posthoc_", clean_facet_name, ".csv"))))
     }
     if (!is.null(group_letters)) {
-      write_csv(group_letters, file.path(base_data_dir, paste0("group_letters_", clean_name(facet_name), ".csv")))
-      message(paste0("Group letters saved for facet '", facet_name, "' to ", file.path(base_data_dir, paste0("group_letters_", clean_name(facet_name), ".csv"))))
-    }
-    
-    # Plotting using ggplot2 directly
-    p <- ggplot(
-      sub_df,
-      aes(x = .data[[group_var]], y = .data[[response_var]], color = .data[[group_var]]) # Use .data[[]] for unquoted column names
-    ) +
-      geom_boxplot(outlier.shape = NA) + # Remove outliers from boxplot to add them via jitter
-      geom_jitter(width = 0.1, alpha = 0.7, size = 2) + # Add jittered points, similar to add = "jitter"
-      scale_color_viridis_d(option = "D") + # A good default color palette, similar to "jco" or others
-      labs(
-        title = paste0(response_var, " by ", group_var, " (", facet_name, ")"),
-        x = group_var,
-        y = response_var
-      ) +
-      coord_cartesian(ylim = c(0, max(df[[response_var]], na.rm = TRUE) * 1.2)) +
-      theme_minimal() +
-      theme(
-        axis.text.x = element_text(angle = 45, hjust = 1), # Better angle for x-axis labels
-        plot.title = element_text(hjust = 0.5)
-      )
-    
-    if (!is.null(facet_var)) {
-      p <- p + facet_wrap(as.formula(paste("~", facet_var)))
-    }
-    
-    if (!is.null(group_letters) && nrow(group_letters) > 0) {
-      # Calculate y_pos for group letters
-      # Ensure y_pos is calculated for each group within the current sub_df
+      write_csv(group_letters, file.path(base_data_dir, paste0("group_letters_", clean_facet_name, ".csv")))
+      message(paste0("Group letters saved for facet '", clean_facet_name, "' to ", file.path(base_data_dir, paste0("group_letters_", clean_facet_name, ".csv"))))
+      
+      # --- Collect CLD data for the single combined plot ---
       label_positions <- sub_df %>%
         group_by(!!group_sym) %>%
         summarise(y_pos = max(!!response_sym, na.rm = TRUE) * 1.05, .groups = "drop")
       
-      label_df <- left_join(group_letters, label_positions, by = c("group" = group_var)) %>% # Join by group name
-        filter(!is.na(y_pos)) # Ensure positions exist
+      label_df_facet <- left_join(group_letters, label_positions, by = c("group" = group_var)) %>%
+        filter(!is.na(y_pos))
       
-      if (nrow(label_df) > 0) {
-        p <- p + geom_text(
-          data = label_df,
-          aes(x = .data$group, y = .data$y_pos, label = .data$letter),
-          vjust = -0.5,
-          fontface = "bold",
-          size = 3, # Adjusted size for better visibility
-          inherit.aes = FALSE
-        )
+      if (nrow(label_df_facet) > 0) {
+        if (!is.null(facet_var)) {
+          label_df_facet[[facet_var]] <- facet_name # The actual facet level
+        }
+        all_cld_data_for_plot[[facet_name]] <- label_df_facet
       }
     }
     
-    # Use ggsave to save the plot
-    plot_filename <- file.path(base_plot_dir, paste0("plot_", clean_response, "_by_", clean_group, "_", clean_name(facet_name), ".png"))
-    ggsave(plot_filename, plot = p, width = 8, height = 6, dpi = 300)
-    message(paste0("Plot saved to: ", plot_filename))
-    
-    print(p) # Display the plot in the R session
-    
     all_results[[facet_name]] <- list(
-      summary   = summary_tbl,
-      tests     = test_results,
-      posthoc   = posthoc_results,
-      cld       = group_letters
+      summary = summary_tbl,
+      tests = test_results,
+      posthoc = posthoc_results,
+      cld = group_letters
+    )
+  } # End of for loop
+  
+  # --- Create the single ggplot object for output ---
+  
+  # Combine all CLD data from facets
+  combined_cld_df <- NULL
+  if (length(all_cld_data_for_plot) > 0) {
+    combined_cld_df <- bind_rows(all_cld_data_for_plot)
+    if (!is.null(facet_var) && is.factor(df[[facet_var]])) {
+      combined_cld_df[[facet_var]] <- factor(combined_cld_df[[facet_var]], levels = levels(df[[facet_var]]))
+    }
+  }
+  
+  # Determine overall max for consistent y-axis limits across all facets
+  max_y_value <- max(df[[response_var]], na.rm = TRUE)
+  if (!is.null(combined_cld_df) && nrow(combined_cld_df) > 0) {
+    # Adjust max_y_value to accommodate the highest CLD label
+    max_label_y <- max(combined_cld_df$y_pos, na.rm = TRUE)
+    max_y_value <- max(max_y_value, max_label_y)
+  }
+  
+  p_final <- ggplot(
+    df, # Use the full, prepared data frame for the plot
+    aes(x = .data[[group_var]], y = .data[[response_var]], color = .data[[group_var]])
+  ) +
+    geom_boxplot(outlier.shape = NA) +
+    geom_jitter(width = 0.1, alpha = 0.7, size = 2) +
+    scale_color_viridis_d(option = "D") +
+    labs(
+      title = paste0(response_var, " by ", group_var, if (!is.null(facet_var)) paste0(" (Faceted by ", facet_var, ")") else ""),
+      x = group_var,
+      y = response_var
+    ) +
+    coord_cartesian(ylim = c(0, max_y_value * 1.1)) + # Adjusted for labels + small buffer
+    theme_minimal() +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      plot.title = element_text(hjust = 0.5)
+    )
+  
+  # Add faceting if a facet variable was provided
+  if (!is.null(facet_var)) {
+    p_final <- p_final + facet_wrap(as.formula(paste("~", facet_var)), scales = "free_x")
+  }
+  
+  # Add group letters (CLD) to the final plot if they exist
+  if (!is.null(combined_cld_df) && nrow(combined_cld_df) > 0) {
+    combined_cld_df$group <- factor(combined_cld_df$group, levels = levels(df[[group_var]]))
+    
+    p_final <- p_final + geom_text(
+      data = combined_cld_df,
+      aes(x = .data$group, y = .data$y_pos, label = .data$letter),
+      vjust = -0.5,
+      fontface = "bold",
+      size = 3,
+      inherit.aes = FALSE
     )
   }
   
-  invisible(all_results)
+  # --- Save the final combined plot ---
+  plot_filename_base <- paste0("plot_", clean_response, "_by_", clean_group)
+  if (!is.null(facet_var)) {
+    plot_filename_base <- paste0(plot_filename_base, "_faceted_by_", clean_name(facet_var))
+  }
+  plot_filename <- file.path(base_plot_dir, paste0(plot_filename_base, ".png"))
+  ggsave(plot_filename, plot = p_final, width = 8, height = 6, dpi = 300)
+  message(paste0("Combined plot saved to: ", plot_filename))
+  
+  print(p_final) # Display the plot in the R session
+  
+  # Return only the ggplot object
+  return(p_final)
 }
 
 

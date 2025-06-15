@@ -1,0 +1,130 @@
+---
+title: "Carrageenan classification"
+author: "Trevor Eakes"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+Explanation of key steps
+
+Max‐peak extraction (df_peaks): for each sample and each band range, we pull the single highest absorbance.
+
+Arithmetic‐means normalization (df_norm): each band’s peak is divided by the mean of that sample’s peaks, yielding relative intensities around 1.
+
+Index calculation (scores):
+
+Kappa = G4S / DA
+
+Iota = DA2S / DA
+
+Lambda = (G2S + DA2S) / DA
+
+Final tables:
+
+Table3_Intensities: one row per band, showing relative intensities for each sample.
+
+Carrageenan_Scores: per‐sample continuous Kappa, Iota, and Lambda indices.
+```{r}
+# Required packages
+
+# 1) Load & reshape your FT-IR data
+#    – Excel file where column 1 = Sample name, columns 2… = wavenumbers (numeric)
+df_raw <- read_excel("ftir_data.xlsx") %>%
+  rename(Sample = 1) %>%
+  pivot_longer(
+    cols = -Sample,
+    names_to  = "Wavenumber",
+    values_to = "Absorbance"
+  ) %>%
+  mutate(Wavenumber = as.numeric(Wavenumber))
+
+# 2) Define the carrageenan signature bands
+bands <- tribble(
+  ~code,   ~name,                                   ~lo,   ~hi,
+  "S",     "Sulphate ester (O–SO₃⁻)",              1210,  1260,
+  "DA",    "C–O band of 3,6-anhydrogalactose",     1070,  1070,
+  "DA",    "3,6-anhydro-D-galactose",              928,   933,
+  "G4S",   "D-galactose-4-sulphate",               840,   850,
+  "G2S",   "D-galactose-2-sulphate",               825,   830,
+  "D2S",   "D-galactose-2,6-disulphate",           815,   820,
+  "DA2S",  "3,6-anhydro-D-galactose-2-sulphate",   800,   805
+)
+
+# 3) Extract max peak intensity in each band & sample
+df_peaks <- df_raw %>%
+  crossing(bands) %>%
+  filter(Wavenumber >= lo, Wavenumber <= hi) %>%
+  group_by(Sample, code, name, lo, hi) %>%
+  summarize(Peak = max(Absorbance, na.rm = TRUE), .groups = "drop")
+
+# 4) Pivot so each band-code is its own column
+df_peak_wide <- df_peaks %>%
+  select(Sample, code, Peak) %>%
+  pivot_wider(
+    names_from  = code,
+    values_from = Peak,
+    values_fill = 0
+  )
+
+# 5) Arithmetic-means normalization of each sample’s peaks
+code_cols <- setdiff(names(df_peak_wide), "Sample")
+df_norm <- df_peak_wide %>%
+  rowwise() %>%
+  mutate(
+    mean_peak = mean(c_across(all_of(code_cols)), na.rm = TRUE)
+  ) %>%
+  ungroup() %>%
+  mutate(across(
+    all_of(code_cols),
+    ~ ifelse(mean_peak > 0, .x / mean_peak, 0)
+  )) %>%
+  select(-mean_peak)
+
+# 6) Compute relative carrageenan scores
+scores <- df_norm %>%
+  mutate(
+    Kappa_Index  = G4S     / DA,
+    Iota_Index   = DA2S    / DA,
+    Lambda_Index = (G2S + DA2S) / DA
+  ) %>%
+  select(Sample, Kappa_Index, Iota_Index, Lambda_Index)
+
+# 7) Build “Table 3”–style summary of normalized intensities
+table3 <- df_norm %>%
+  pivot_longer(
+    cols       = -Sample,
+    names_to   = "Letter_code",
+    values_to  = "Rel_Intensity"
+  ) %>%
+  left_join(bands, by = c("Letter_code" = "code")) %>%
+  mutate(
+    `Wavenumbers (cm⁻¹)` = paste0(lo, "–", hi),
+    `Functional group`   = name
+  ) %>%
+  select(`Wavenumbers (cm⁻¹)`, `Functional group`, Letter_code,
+         Sample, Rel_Intensity) %>%
+  pivot_wider(
+    names_from  = Sample,
+    values_from = Rel_Intensity
+  ) %>%
+  arrange(lo) %>%
+  select(-lo, -hi, -name)
+
+# 8) Write outputs to Excel
+write_xlsx(
+  list(
+    Table3_Intensities = table3,
+    Carrageenan_Scores  = scores
+  ),
+  path = "ftir_summary.xlsx"
+)
+
+# 9) Print to console
+cat("\n=== Table 3 — Normalized Band Intensities ===\n")
+print(table3)
+
+cat("\n=== Carrageenan Relative Scores ===\n")
+print(scores)
+
+```
+

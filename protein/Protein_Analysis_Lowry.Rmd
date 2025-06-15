@@ -312,7 +312,7 @@ print(summary_stats)
 # 1. Merge enhanced replicate summary with metadata by column "ID"
 #    This will save "PErep_final.csv" and assign the merged data frame to `PErep_final`.
 # 1. Define export folder and create it if needed
-final_export_dir <- file.path("output prot", "export data", "Samples Analysis Final")
+final_export_dir <- file.path("output_prot", "export data", "Samples Analysis Final")
 dir.create(final_export_dir, recursive = TRUE, showWarnings = FALSE)
 
 #

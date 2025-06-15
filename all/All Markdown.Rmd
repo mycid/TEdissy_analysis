@@ -46,27 +46,49 @@ all_files <- list.files(
 )
 all_files <- all_files[!grepl("^~\\$", basename(all_files))]
 
+# Ensure `readxl` and `readr` are loaded if not already in your setup chunk
+# library(readxl)
+# library(readr)
+# No need for library(fs) with this change!
+
 # 3. Loop over each file
 for (file in all_files) {
   # 3a. Create a clean object name (strip out folder & extension)
-  name <- file_path_sans_ext(basename(file))
+  # CHANGED: Using tools::file_path_sans_ext from base R
+  name <- tools::file_path_sans_ext(basename(file))
 
   # 3b. Determine file type
   if (grepl("\\.xlsx$", file)) {
     # Read Excel file (2nd sheet if available, else 1st)
-    sheet_names   <- excel_sheets(file)
+    sheet_names <- readxl::excel_sheets(file)
     sheet_to_read <- if (length(sheet_names) >= 2) sheet_names[2] else sheet_names[1]
-    data <- suppressMessages(read_excel(file, sheet = sheet_to_read))
+    data <- suppressMessages(readxl::read_excel(file, sheet = sheet_to_read))
     message("Loaded Excel file: ", name, " (sheet = '", sheet_to_read, "')")
   } else if (grepl("\\.csv$", file)) {
-    # Read CSV file
-    data <- suppressMessages(read_csv(file, show_col_types = FALSE))
+    # Read CSV file with explicit UTF-8 encoding
+    data <- suppressMessages(readr::read_csv(file,
+                                             show_col_types = FALSE,
+                                             locale = readr::locale(encoding = "UTF-8")))
     message("Loaded CSV file: ", name)
   }
 
   # 3c. Assign the data.frame to the global environment under "name"
   assign(name, data, envir = .GlobalEnv)
 }
+
+# --- IMPORTANT AFTER LOADING ALL FILES ---
+# Even with explicit encoding, sometimes files can have truly malformed UTF-8
+# or be in a different encoding altogether (e.g., Latin-1).
+# If you still get UTF-8 errors *after* this, consider these troubleshooting steps:
+# 1. Try a different encoding for CSVs: `locale = readr::locale(encoding = "Latin1")`
+#    or `locale = readr::locale(encoding = "ISO-8859-1")` (Windows-1252 is often similar to Latin1)
+# 2. After loading, apply the `iconv` fix to your merged data:
+#    (Example for full_merged_data after it's created)
+#    char_cols <- names(full_merged_data)[sapply(full_merged_data, is.character)]
+#    for (col_name in char_cols) {
+#      full_merged_data[[col_name]] <- iconv(full_merged_data[[col_name]], from = "", to = "UTF-8", sub = "byte")
+#    }
+#    This `iconv` step attempts to clean up any remaining invalid characters.
 ```
 ## Make the factors and color levels
 ```{r}
@@ -77,7 +99,7 @@ desired_location_order <- c("Mendieta", "Concession", "Caro Caido", "7H", "Powde
 life_s_levels           <- c("Carp", "Gam", "Gam/Tetra", "Tetra", "Unknown")
 
 # Harmonized Colors
-group_colors <- c(
+group_colors1 <- c(
   # Location colors
   "Mendieta"        = "#66c2a5",  # muted green
   "Concession"      = "#66e2a5",  # same as Mendieta
@@ -139,7 +161,7 @@ pr_location_cham <- pr_rep_final %>%
 pe_location <- pe_rep_final %>%
   filter(!Location %in% c("Lima Market Freeze Dry", "Ilo Freeze Dry", "Ilo oven dry", "Ilo Fresh", "Lima Market Fresh"))
 
-pe_location_cham <- pe_rep_final %>%
+pe_location_cham <- pe_location %>%
   filter(!variety %in% c("F.Glom"))
 # 6. Run group comparisons and print outputs
 
@@ -248,6 +270,7 @@ car_plot_LOC <- compare_groups(
 ) + scale_fill_manual(values = group_colors) +
     scale_color_manual(values = group_colors)
 
+View(car_plot_LOC)
 ```
 
 ## Make lists of the plots
@@ -370,6 +393,7 @@ legend_region_plot <- plots_region[[5]] +
   scale_color_manual(values = group_colors, name = "region") +
   theme(legend.position = "right")
 
+
 #legend_life_stage <- get_legend(legend_life_stage_plot)
 legend_life_stage <- get_legend(legend_life_stage_plot)
 legend_region   <- get_legend(legend_region_plot)
@@ -386,4 +410,533 @@ ggsave("output_all/plots/legend_region.png",
 
 
 ```
+
+```{r}
+# --- Merge all datasets together using common IDs ---
+# We'll start with 'pe_rep_final' as a base and sequentially join the others.
+# This assumes 'join_id', 'Location', 'variety', and 'Life_S' are present in all files
+# and will be used as the keys for joining.
+
+full_merged_data <- pe_rep_final %>%
+  full_join(pr_rep_final, by = c("join_id"), suffix = c(".pe", ".pr")) %>%
+  full_join(carb_rep_final, by = c("join_id"), suffix = c(".pr", ".carb")) %>%
+  full_join(ash_rep_final, by = c("join_id"), suffix = c(".carb", ".ash")) %>%
+  full_join(car_rep_final, by = c("join_id"), suffix = c(".ash", ".car"))
+
+message("Attempting to fix character encoding in full_merged_data...")
+
+# Identify all character columns
+char_cols <- names(full_merged_data)[sapply(full_merged_data, is.character)]
+
+# Convert each character column to UTF-8, replacing invalid sequences
+# The 'sub = "byte"' option will replace invalid bytes with their byte representation,
+# which can help identify them, or you can use 'sub = ""' to remove them.
+for (col_name in char_cols) {
+  full_merged_data[[col_name]] <- iconv(full_merged_data[[col_name]],
+                                        from = "",      # Autodetect input encoding
+                                        to = "UTF-8",   # Convert to UTF-8
+                                        sub = "byte")   # How to handle invalid characters
+                                                      # You can try 'sub = ""' to simply remove them
+}
+message("Character encoding fix attempt completed.")
+
+# Check for any remaining NAs introduced by iconv (if sub = "byte" was used and characters were truly unconvertible)
+# and inspect unique values of your group_vars to see if any look odd.
+unique(full_merged_data$Location)
+unique(full_merged_data$variety)
+unique(full_merged_data$Life_S)
+
+# Display first few rows and structure of the merged data
+head(full_merged_data)
+
+full_merged_data <- full_merged_data %>%
+  mutate(
+    across(
+      where(is.numeric), # Selects all columns that are numeric
+      ~ ifelse(is.infinite(.), NA, .) # Replaces infinite values with NA
+    )
+  )
+
+
+```
+
+
+
+```{r}
+# List of your numeric variables for PCA/PLS-DA
+# IMPORTANT: Adjust these to the actual column names in your `full_merged_data`
+# based on how your merge resulted (e.g., Protein_mg_per_g_mean.PE, etc.)
+numeric_vars <- c(
+  "Protein_mg_per_g_mean",
+  "carb_mg_per_g_mean",
+  #"car_per",
+  "ash_per_mean",
+  "PE_mg_per_g_sample_mean"
+  # Add all other numeric variables from your merged data
+)
+
+# List of your group variables
+group_vars <- c("Location", "region", "variety", "Life_S")
+
+data_for_analysis <- full_merged_data %>%
+  select(all_of(c("join_id", group_vars, numeric_vars))) %>%
+  # Combine Life_S and Location into a new variable
+  mutate(LifeS_Location_Combined = paste(Life_S, Location, sep = "_")) %>%
+  # Ensure the new combined variable is a factor
+  mutate(LifeS_Location_Combined = as.factor(LifeS_Location_Combined)) %>%
+  na.omit()
+
+# Check the structure of the data for analysis
+head(data_for_analysis)
+
+numeric_vars_pe_pr <- c(
+  "Protein_mg_per_g_mean", # Adjust if your merge gave these names
+  "PE_mg_per_g_sample_mean" # Adjust if your merge gave these names
+)
+
+data_for_analysis_pe_pr <- full_merged_data %>%
+  select(all_of(c("join_id", group_vars, numeric_vars_pe_pr))) %>%
+  na.omit() # Omit NA for just these two variables
+
+message(paste("Sample size for PE/PR analysis:", nrow(data_for_analysis_pe_pr)))
+
+```
+
+##Biplot
+```{r}
+# Prepare data for PCA (numeric matrix)
+pca_data <- data_for_analysis %>%
+  select(all_of(numeric_vars)) %>%
+  scale() # Scale the data (important for PCA)
+
+# Perform PCA
+res.pca <- PCA(pca_data, graph = FALSE)
+
+# Visualize scree plot (variance explained by each PC)
+fviz_eig(res.pca, addlabels = TRUE, ylim = c(0, 50))
+
+# Biplot of individuals and variables
+# You can color by one of your group variables, e.g., 'Life_S'
+# Biplot of individuals and variables and save
+# You can color by one of your group variables, e.g., 'Life_S'
+p_biplot <- fviz_pca_biplot(res.pca,
+                            habillage = data_for_analysis$Life_S, # Color by 'Life_S'
+                            addEllipses = TRUE, # Add ellipses around groups
+                            ellipse.type = "convex", # Type of ellipse
+                            repel = TRUE, # Avoid text overlapping
+                            ggtheme = theme_minimal())
+
+p_biplot_combined <- fviz_pca_biplot(res.pca,
+                                     habillage = data_for_analysis$LifeS_Location_Combined, # Color by combined variable
+                                     addEllipses = TRUE, # Add ellipses around groups
+                                     ellipse.type = "convex", # Type of ellipse
+                                     repel = TRUE, # Avoid text overlapping
+                                     ggtheme = theme_minimal(),
+                                     title = "PCA Biplot colored by Life_S and Location") # Add a descriptive title
+print(p_biplot_combined)
+ggsave(filename = file.path(plot_dir, "pca_biplot_LifeS_Location_Combined.png"), plot = p_biplot_combined, width = 12, height = 10)
+
+print(p_biplot)
+ggsave(filename = file.path(plot_dir, "pca_biplot_LifeS.png"), plot = p_biplot, width = 10, height = 8)
+
+
+# Contributions of variables to the first two principal components and save
+p_contrib_pc1 <- fviz_contrib(res.pca, choice = "var", axes = 1, top = 10)
+print(p_contrib_pc1)
+ggsave(filename = file.path(plot_dir, "pca_contrib_pc1.png"), plot = p_contrib_pc1, width = 8, height = 6)
+
+p_contrib_pc2 <- fviz_contrib(res.pca, choice = "var", axes = 2, top = 10)
+print(p_contrib_pc2)
+ggsave(filename = file.path(plot_dir, "pca_contrib_pc2.png"), plot = p_contrib_pc2, width = 8, height = 6)
+
+```
+##Individuals plot
+
+```{r}
+## Section 3. PCA Analysis
+# ... (previous code for pca_data and res.pca) ...
+
+# --- Individual Plot: Samples colored by Life_S ---
+# This plot is excellent for visualizing clusters of samples.
+p_ind_LifeS <- fviz_pca_ind(res.pca,
+                            geom.ind = "point", # Show points for individuals
+                            col.ind = data_for_analysis$Life_S, # Color by 'Life_S'
+                            palette = "Dark2", # Choose a color palette
+                            addEllipses = TRUE, # Add ellipses around groups
+                            ellipse.type = "convex", # Type of ellipse
+                            repel = TRUE, # Avoid text overlapping
+                            legend.title = "Life Stage", # Custom legend title
+                            ggtheme = theme_minimal(),
+                            title = "PCA Individuals Plot (Colored by Life Stage)")
+print(p_ind_LifeS)
+ggsave(filename = file.path(plot_dir, "pca_individuals_LifeS.png"), plot = p_ind_LifeS, width = 9, height = 7)
+
+
+# --- Individual Plot: Samples colored by Location ---
+p_ind_Location <- fviz_pca_ind(res.pca,
+                               geom.ind = "point",
+                               col.ind = data_for_analysis$Location, # Color by 'Location'
+                               palette = "Paired", # Another color palette example
+                               addEllipses = TRUE,
+                               ellipse.type = "convex",
+                               repel = TRUE,
+                               legend.title = "Location",
+                               ggtheme = theme_minimal(),
+                               title = "PCA Individuals Plot (Colored by Location)")
+print(p_ind_Location)
+ggsave(filename = file.path(plot_dir, "pca_individuals_Location.png"), plot = p_ind_Location, width = 9, height = 7)
+
+# --- Individual Plot: Samples colored by the combined variable (if you created it) ---
+# Assuming you added `LifeS_Location_Combined` in the previous step
+if ("LifeS_Location_Combined" %in% colnames(data_for_analysis)) {
+  p_ind_combined <- fviz_pca_ind(res.pca,
+                                 geom.ind = "point",
+                                 col.ind = data_for_analysis$LifeS_Location_Combined,
+                                 addEllipses = TRUE,
+                                 ellipse.type = "convex",
+                                 repel = TRUE,
+                                 legend.title = "Life Stage_Location",
+                                 ggtheme = theme_minimal(),
+                                 title = "PCA Individuals Plot (Colored by Life Stage & Location)")
+  print(p_ind_combined)
+  ggsave(filename = file.path(plot_dir, "pca_individuals_LifeS_Location_Combined.png"), plot = p_ind_combined, width = 12, height = 10)
+}
+
+# ... (rest of your PCA plots like biplot and contribution plots) ...
+```
+##Just protein and phycoerythrin variables
+
+```{r}
+# Prepare data for PCA
+pca_data_pe_pr <- data_for_analysis_pe_pr %>%
+  select(all_of(numeric_vars_pe_pr)) %>%
+  scale() # Scale the data
+
+# Perform PCA
+res.pca_pe_pr <- PCA(pca_data_pe_pr, graph = FALSE)
+
+# Scree plot
+p_eig_pe_pr <- fviz_eig(res.pca_pe_pr, addlabels = TRUE, ylim = c(0, 100))
+print(p_eig_pe_pr)
+ggsave(filename = file.path(plot_dir, "pca_pe_pr_scree_plot.png"), plot = p_eig_pe_pr, width = 8, height = 6)
+
+# Biplot (individuals + variables) - Colored by Life_S
+p_biplot_pe_pr_LifeS <- fviz_pca_biplot(res.pca_pe_pr,
+                                       habillage = data_for_analysis_pe_pr$Life_S,
+                                       addEllipses = TRUE,
+                                       ellipse.type = "convex",
+                                       repel = TRUE,
+                                       ggtheme = theme_minimal(),
+                                       title = "PCA Biplot (PE/PR) - Life Stage")
+print(p_biplot_pe_pr_LifeS)
+ggsave(filename = file.path(plot_dir, "pca_pe_pr_biplot_LifeS.png"), plot = p_biplot_pe_pr_LifeS, width = 10, height = 8)
+
+# Biplot (individuals + variables) - Colored by Location
+p_biplot_pe_pr_Location <- fviz_pca_biplot(res.pca_pe_pr,
+                                          habillage = data_for_analysis_pe_pr$Location,
+                                          addEllipses = TRUE,
+                                          ellipse.type = "convex",
+                                          repel = TRUE,
+                                          ggtheme = theme_minimal(),
+                                          title = "PCA Biplot (PE/PR) - Location")
+print(p_biplot_pe_pr_Location)
+ggsave(filename = file.path(plot_dir, "pca_pe_pr_biplot_Location.png"), plot = p_biplot_pe_pr_Location, width = 10, height = 8)
+
+
+# Individual Plot (just samples) - Colored by Life_S
+p_ind_pe_pr_LifeS <- fviz_pca_ind(res.pca_pe_pr,
+                                  geom.ind = "point",
+                                  col.ind = data_for_analysis_pe_pr$Life_S,
+                                  addEllipses = TRUE,
+                                  ellipse.type = "convex",
+                                  repel = TRUE,
+                                  ggtheme = theme_minimal(),
+                                  title = "PCA Individuals (PE/PR) - Life Stage")
+print(p_ind_pe_pr_LifeS)
+ggsave(filename = file.path(plot_dir, "pca_pe_pr_individuals_LifeS.png"), plot = p_ind_pe_pr_LifeS, width = 9, height = 7)
+
+# Individual Plot (just samples) - Colored by Location
+p_ind_pe_pr_Location <- fviz_pca_ind(res.pca_pe_pr,
+                                   geom.ind = "point",
+                                   col.ind = data_for_analysis_pe_pr$Location,
+                                   addEllipses = TRUE,
+                                   ellipse.type = "convex",
+                                   repel = TRUE,
+                                   ggtheme = theme_minimal(),
+                                   title = "PCA Individuals (PE/PR) - Location")
+print(p_ind_pe_pr_Location)
+ggsave(filename = file.path(plot_dir, "pca_pe_pr_individuals_Location.png"), plot = p_ind_pe_pr_Location, width = 9, height = 7)
+```
+##Summary tables 
+
+
+```{r beautiful_summary_all_nutrients_tables_colored}
+# This code assumes `full_merged_data` and `numeric_vars_all_nutrients` are defined
+# in previous chunks.
+numeric_vars_all_nutrients <- c(
+  "Protein_mg_per_g_mean",      # Example: Protein from the 'pr' merge
+  "PE_mg_per_g_sample_mean",# Example: Phycoerythrin from the 'pe' merge
+  "carb_mg_per_g_mean",        # Example: Carbohydrate from 'carb' merge
+  "car_per",     # Example: Carrageenan from 'car' merge
+  "ash_per_mean"              # Example: Ash from 'ash' merge
+  # Add any other numeric variables you want to include here
+)
+message("Initiating aggressive character cleaning for all character columns in full_merged_data...")
+
+# Identify all character columns in full_merged_data
+char_cols_to_clean <- names(full_merged_data)[sapply(full_merged_data, is.character)]
+
+# Loop through each character column and attempt to clean/re-encode
+for (col_name in char_cols_to_clean) {
+  # Option 1: Convert to ASCII, dropping unconvertible characters.
+  # This is a very robust way to eliminate problem characters if special symbols aren't critical.
+  # It will convert characters with diacritics (e.g., é to e) but remove truly unmappable ones.
+  full_merged_data[[col_name]] <- iconv(full_merged_data[[col_name]],
+                                        from = "UTF-8", # Assume input is UTF-8 (from your CSV load attempt)
+                                        to = "ASCII//TRANSLIT", # Transliterate to ASCII, remove unmappable
+                                        sub = "") # Substitute unmappable characters with nothing
+}
+# Redefine calculate_summary_stats to get Mean, SE, and N for each variable
+calculate_summary_stats <- function(value_col) {
+  list(
+    Mean = mean(value_col, na.rm = TRUE),
+    SE = sd(value_col, na.rm = TRUE) / sqrt(length(na.omit(value_col))),
+    N = length(na.omit(value_col)) # Number of non-NA values for this specific column
+  )
+}
+
+# --- Prepare data for all three summary tables using full_merged_data ---
+# Use `numeric_vars_all_nutrients` here!
+
+# Note: The `calculate_summary_stats` function is no longer needed if you
+# compute Mean, SE, and N directly within summarise.
+# You can remove or comment out its definition.
+
+summary_LifeS_long <- full_merged_data %>%
+  select(all_of(c("Life_S", numeric_vars_all_nutrients))) %>%
+  pivot_longer(cols = all_of(numeric_vars_all_nutrients), names_to = "Variable", values_to = "Value") %>%
+  group_by(Life_S, Variable) %>%
+  summarise(
+    # --- IMPORTANT CHANGE HERE ---
+    # Calculate Mean, SE, and N directly as named outputs
+    Mean = mean(Value, na.rm = TRUE),
+    SE = sd(Value, na.rm = TRUE) / sqrt(length(na.omit(Value))),
+    N = length(na.omit(Value)),
+    .groups = 'drop' # Ensure grouping is dropped after summarization
+  )
+
+
+summary_Location_long <- full_merged_data %>%
+  select(all_of(c("Location", numeric_vars_all_nutrients))) %>%
+  pivot_longer(cols = all_of(numeric_vars_all_nutrients), names_to = "Variable", values_to = "Value") %>%
+  group_by(Location, Variable) %>%
+  summarise(
+    Mean = mean(Value, na.rm = TRUE),
+    SE = sd(Value, na.rm = TRUE) / sqrt(length(na.omit(Value))),
+    N = length(na.omit(Value)),
+    .groups = 'drop'
+  )
+
+summary_Variety_long <- full_merged_data %>%
+  select(all_of(c("variety", numeric_vars_all_nutrients))) %>%
+  pivot_longer(cols = all_of(numeric_vars_all_nutrients), names_to = "Variable", values_to = "Value") %>%
+  group_by(variety, Variable) %>%
+  summarise(
+    Mean = mean(Value, na.rm = TRUE),
+    SE = sd(Value, na.rm = TRUE) / sqrt(length(na.omit(Value))),
+    N = length(na.omit(Value)),
+    .groups = 'drop'
+  )
+
+# --- The rest of your `gt` table generation code remains the same ---
+# (It will now correctly find 'Mean', 'SE', and 'N' columns after the pivot_wider)
+
+# Recalculate consistent color domain based on ALL_NUTRIENTS means (already correct)
+all_means_for_coloring_all_nutrients <- c(
+  summary_LifeS_long$Mean,
+  summary_Location_long$Mean,
+  summary_Variety_long$Mean
+)
+global_min_mean_all_nutrients <- min(all_means_for_coloring_all_nutrients, na.rm = TRUE)
+global_max_mean_all_nutrients <- max(all_means_for_coloring_all_nutrients, na.rm = TRUE)
+
+# --- The rest of your `gt` table generation code remains the same ---
+# (It will now correctly find 'Mean', 'SE', and 'N' columns after the pivot_wider)
+
+# Recalculate consistent color domain based on ALL_NUTRIENTS means (already correct)
+all_means_for_coloring_all_nutrients <- c(
+  summary_LifeS_long$Mean,
+  summary_Location_long$Mean,
+  summary_Variety_long$Mean
+)
+global_min_mean_all_nutrients <- min(all_means_for_coloring_all_nutrients, na.rm = TRUE)
+global_max_mean_all_nutrients <- max(all_means_for_coloring_all_nutrients, na.rm = TRUE)
+
+# --- 1. Beautiful Summary Table by Life Stage (Life_S) ---
+# ... (rest of your gt_table_LifeS_colored code) ...
+
+# --- 2. Beautiful Summary Table by Location ---
+# ... (rest of your gt_table_Location_colored code) ...
+
+# --- 3. Beautiful Summary Table by Variety ---
+# ... (rest of your gt_table_Variety_colored code) ...
+# --- Determine a consistent color domain for all tables (optional but recommended) ---
+# This ensures that the same mean value gets the same color across all tables.
+# This uses the means from all nutrients, which might be a wider range.
+#- 1. Beautiful Summary Table by Life Stage (Life_S) ---
+temp_df_after_pivot <- summary_LifeS_long %>%
+  pivot_wider(names_from = Variable, values_from = c(Mean, SE, N))
+
+# Check the class and summary of the problematic column and others
+str(temp_df_after_pivot$Mean_PE_mg_per_g_sample_mean)
+summary(temp_df_after_pivot$Mean_PE_mg_per_g_sample_mean)
+
+# Check if there are any non-finite values in the columns you want to color
+# Replace "Mean_PE_mg_per_g_sample_mean" with actual column names if needed
+columns_to_check <- names(temp_df_after_pivot)[startsWith(names(temp_df_after_pivot), "Mean_")]
+for (col in columns_to_check) {
+  if (any(!is.finite(temp_df_after_pivot[[col]]))) {
+    message(paste0("Column '", col, "' contains non-finite values (NA, NaN, Inf)."))
+    print(temp_df_after_pivot[which(!is.finite(temp_df_after_pivot[[col]])), c("Life_S", col)])
+  }
+}
+# stop("Debug point after pivot_wider") # Use this to stop execution and inspect `temp_df_after_pivot`
+#
+#
+#
+
+# Your gt table creation code
+gt_table_LifeS_colored <- summary_LifeS_long %>%
+  mutate(
+    Mean = ifelse(is.infinite(Mean), NA, Mean),
+    SE = ifelse(is.infinite(SE), NA, SE)
+  ) %>%
+  pivot_wider(names_from = Variable, values_from = c(Mean, SE, N)) %>%
+  gt() %>%
+  data_color(
+    columns = starts_with("Mean_"),
+    palette = "Blues",
+    domain = c(global_min_mean_all_nutrients, global_max_mean_all_nutrients)
+    # na.rm = TRUE # <--- REMOVED THIS LINE
+  ) %>%
+  {
+    gt_obj <- .
+    for (var_name in numeric_vars_all_nutrients) {
+      mean_col <- sym(paste0("Mean_", var_name))
+      se_col <- sym(paste0("SE_", var_name))
+      n_col <- sym(paste0("N_", var_name))
+
+      gt_obj <- gt_obj %>%
+        fmt_number(
+          columns = c(!!mean_col, !!se_col),
+          decimals = 2
+        ) %>%
+        fmt_integer(
+          columns = !!n_col
+        ) %>%
+        cols_merge(
+          columns = c(!!mean_col, !!se_col, !!n_col),
+          pattern = "{1} ± {2} (N={3})"
+        ) %>%
+        cols_label(
+          !!mean_col := var_name
+        )
+    }
+    gt_obj
+  } %>%
+  cols_label(Life_S = md("**Life Stage**")) %>%
+  tab_header(
+    title = md("**Summary of All Nutrients by Life Stage**")
+  ) %>%
+  opt_horizontal_padding(scale = 2) %>%
+  tab_options(
+    table.border.top.color = "lightgray",
+    table.border.bottom.color = "lightgray",
+    heading.border.bottom.color = "lightgray",
+    column_labels.border.bottom.color = "lightgray"
+  ) %>%
+  tab_footnote(
+    footnote = "Values represent Mean ± Standard Error (SE) (N=Number of Samples).",
+    locations = cells_column_labels(columns = starts_with("Mean_"))
+  )
+
+# Display the table in the R Markdown output
+gt_table_LifeS_colored
+
+gt_table_Location_colored <- summary_Location_long %>%
+  # Pivot wider to get Mean_X, SE_X, N_X columns ready for gt
+  pivot_wider(names_from = Variable, values_from = c(Mean, SE, N)) %>%
+  gt() %>%
+  # Apply data_color to the Mean columns for visual emphasis
+  data_color(
+    columns = starts_with("Mean_"), # Applies color to all columns starting with "Mean_"
+    palette = "Blues",
+    domain = c(global_min_mean_all_nutrients, global_max_mean_all_nutrients)
+  ) %>%
+  # Loop through each nutrient variable to format and merge its Mean, SE, and N into one cell
+  {
+    gt_obj <- . # Assign the current gt object to 'gt_obj'
+    for (var_name in numeric_vars_all_nutrients) {
+      mean_col <- sym(paste0("Mean_", var_name)) # Construct the internal column name for Mean
+      se_col <- sym(paste0("SE_", var_name))      # Construct the internal column name for SE
+      n_col <- sym(paste0("N_", var_name))        # Construct the internal column name for N
+
+      # Robustly check if these specific columns exist before trying to format/merge them
+      # This prevents errors if a particular nutrient had no data for some groups
+      if (all(as.character(mean_col) %in% names(gt_obj$`_data`)) &&
+          all(as.character(se_col) %in% names(gt_obj$`_data`)) &&
+          all(as.character(n_col) %in% names(gt_obj$`_data`))) {
+
+        gt_obj <- gt_obj %>%
+          fmt_number(
+            columns = c(!!mean_col, !!se_col),
+            decimals = 2
+          ) %>%
+          fmt_integer(
+            columns = !!n_col
+          ) %>%
+          cols_merge(
+            columns = c(!!mean_col, !!se_col, !!n_col),
+            pattern = "{1} ± {2} (N={3})" # Defines how Mean, SE, N are combined in the cell
+          ) %>%
+          cols_label(
+            !!mean_col := var_name # Relabel the combined column to your clean nutrient name
+          )
+      } else {
+        message(paste0("Skipping merge/format for '", var_name, "' as its raw Mean/SE/N columns were not found (e.g., no data for this variable in some groups)."))
+      }
+    }
+    gt_obj # Return the modified gt object from the loop
+  } %>%
+  # Label the grouping column
+  cols_label(Location = md("**Location**")) %>%
+  # Add a main title to the table
+  tab_header(
+    title = md("**Summary of All Nutrients by Location**")
+  ) %>%
+  # Adjust horizontal padding for better aesthetics
+  opt_horizontal_padding(scale = 2) %>%
+  # Apply general table styling options
+  tab_options(
+    table.border.top.color = "lightgray",
+    table.border.bottom.color = "lightgray",
+    heading.border.bottom.color = "lightgray",
+    column_labels.border.bottom.color = "lightgray"
+  ) %>%
+  # Add a footnote to explain the merged cell format
+  tab_footnote(
+    footnote = "Values represent Mean ± Standard Error (SE) (N=Number of Samples).",
+    locations = cells_column_labels(columns = starts_with("Mean_"))
+  )
+
+# Display the table in your R Markdown output
+gt_table_Location_colored
+
+
+gtsave(gt_table_LifeS_colored, file.path(data_dir, "summary_all_nutrients_LifeS_table_colored.html"))
+gtsave(gt_table_LifeS_colored, file.path(plot_dir, "summary_all_nutrients_LifeS_table_colored.png"))
+gtsave(gt_table_Location_colored, file.path(data_dir, "summary_all_nutrients_Location_table_colored.html"))
+gtsave(gt_table_Location_colored, file.path(plot_dir, "summary_all_nutrients_Location_table_colored.png"))
+```
+
 
