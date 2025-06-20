@@ -1,0 +1,85 @@
+---
+title: "Morph"
+author: "Trevor Eakes"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+# Load required libraries
+library(readxl)
+library(dplyr)
+library(ggplot2)
+
+# Read in your Excel file
+df <- read_excel("morph_clean.xlsx")
+
+# Clean column names (replace spaces and dots with underscores)
+names(df) <- gsub(" |\\.", "_", names(df))
+
+# Summarize data by Location, Life Stage, and Variety
+summary_table <- df %>%
+  group_by(Location, Life_S, variety) %>%
+  summarise(
+    count = n(),
+    mean_height = mean(Height, na.rm = TRUE),
+    mean_blade_width = mean(Blade_width_largest_at_widest_point_mm, na.rm = TRUE),
+    mean_divisions = mean(Divisions, na.rm = TRUE),
+    mean_dry_weight = mean(dry_weight, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Print summary table
+print(summary_table)
+write.csv(summary_table, file = "output/plots_morph/morphometric_summary.csv", row.names = FALSE)
+
+# Function to summarize height statistics
+summarize_height <- function(data, group_var) {
+  data %>%
+    group_by(.data[[group_var]]) %>%
+    summarise(
+      n = n(),
+      mean_height = mean(Height, na.rm = TRUE),
+      Q1 = quantile(Height, 0.25, na.rm = TRUE),
+      Median = quantile(Height, 0.50, na.rm = TRUE),
+      Q3 = quantile(Height, 0.75, na.rm = TRUE),
+      .groups = "drop"
+    )
+}
+
+# Ensure output directory exists
+output_dir <- "output/plots_morph"
+dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+
+# Summary by variety
+height_by_variety <- summarize_height(df, "variety")
+cat("\n--- Height Summary by Variety ---\n")
+print(height_by_variety)
+write.csv(height_by_variety, file = file.path(output_dir, "height_summary_by_variety.csv"), row.names = FALSE)
+
+# Summary by Life Stage
+height_by_life <- summarize_height(df, "Life_S")
+cat("\n--- Height Summary by Life Stage ---\n")
+print(height_by_life)
+write.csv(height_by_life, file = file.path(output_dir, "height_summary_by_life_stage.csv"), row.names = FALSE)
+
+# Summary by Location
+height_by_location <- summarize_height(df, "Location")
+cat("\n--- Height Summary by Location ---\n")
+print(height_by_location)
+write.csv(height_by_location, file = file.path(output_dir, "height_summary_by_location.csv"), row.names = FALSE)
+
+# Generate and save plots by Location
+plot_morph_var(df, "Height", "Location", plot_dir)
+plot_morph_var(df, "Blade_width_largest_at_widest_point_mm", "Location", plot_dir)
+plot_morph_var(df, "Divisions", "Location", plot_dir)
+plot_morph_var(df, "dry_weight", "Location", plot_dir)
+
+# Additional plots by variety
+plot_morph_var(df, "Height", "variety", plot_dir)
+plot_morph_var(df, "Blade_width_largest_at_widest_point_mm", "variety", plot_dir)
+plot_morph_var(df, "dry_weight", "variety", plot_dir)
+
+
+```
+

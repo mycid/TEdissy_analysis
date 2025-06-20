@@ -1,0 +1,11 @@
+.y.,group1,group2,n1,n2,statistic,p,p.adj,p.adj.signif
+car_per,Carp,Unknown,5,3,0,0.036,0.357,ns
+car_per,Gam/Tetra,Unknown,5,3,0,0.036,0.357,ns
+car_per,Gam,Unknown,4,3,0,0.057,0.571,ns
+car_per,Carp,Gam,5,4,16,0.19,1,ns
+car_per,Carp,Gam/Tetra,5,5,17,0.421,1,ns
+car_per,Carp,Tetra,5,3,11,0.393,1,ns
+car_per,Gam,Gam/Tetra,4,5,8,0.73,1,ns
+car_per,Gam,Tetra,4,3,5,0.857,1,ns
+car_per,Gam/Tetra,Tetra,5,3,10,0.571,1,ns
+car_per,Tetra,Unknown,3,3,0,0.1,1,ns

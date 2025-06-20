@@ -457,6 +457,11 @@ full_merged_data <- full_merged_data %>%
     )
   )
 
+write.csv(full_merged_data, "full_merged_data.csv")
+
+
+
+
 
 ```
 
@@ -469,14 +474,40 @@ full_merged_data <- full_merged_data %>%
 numeric_vars <- c(
   "Protein_mg_per_g_mean",
   "carb_mg_per_g_mean",
-  #"car_per",
+  "car_per",
   "ash_per_mean",
   "PE_mg_per_g_sample_mean"
   # Add all other numeric variables from your merged data
 )
 
+# Returns a named vector of counts
+sample_counts <- sapply(
+  full_merged_data[numeric_vars],
+  function(x) sum(!is.na(x))
+)
+print(sample_counts)
+
 # List of your group variables
-group_vars <- c("Location", "region", "variety", "Life_S")
+#count number of samples for different combinations
+counts_by_group <- full_merged_data %>%
+  group_by(across(all_of(group_vars))) %>%
+  summarise(
+    across(
+      all_of(numeric_vars),
+      ~ sum(!is.na(.)),
+      .names = "n_{.col}"
+    ),
+    .groups = "drop"
+  ) %>%
+  # if you prefer a long/tidy layout:
+  pivot_longer(
+    cols        = starts_with("n_"),
+    names_to    = "variable",
+    values_to   = "n_samples",
+    names_prefix= "n_"
+  )
+
+print(counts_by_group)
 
 data_for_analysis <- full_merged_data %>%
   select(all_of(c("join_id", group_vars, numeric_vars))) %>%
@@ -486,6 +517,16 @@ data_for_analysis <- full_merged_data %>%
   mutate(LifeS_Location_Combined = as.factor(LifeS_Location_Combined)) %>%
   na.omit()
 
+#
+# BASE-R approach: a list of tables
+samples_per_group <- lapply(group_vars, function(g) {
+  # `useNA="no"` drops NAs; omit if you want to count NAs too
+  table(full_merged_data[[g]], useNA = "no")
+})
+names(samples_per_group) <- group_vars
+
+# print them out
+samples_per_group
 # Check the structure of the data for analysis
 head(data_for_analysis)
 

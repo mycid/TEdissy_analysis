@@ -40,7 +40,8 @@ required_packages <- c(
   "gt",
   "rstatix",
   "PMCMRplus",
-  "writexl"
+  "mixOmics",
+  "tibble"
 )
 for(pkg in required_packages) {
   if (!requireNamespace(pkg, quietly = TRUE)) {
@@ -243,7 +244,6 @@ tidy_all <- function(df_list, blanks_list) {
   
   invisible(NULL)
 }
-
 #
 #
 #

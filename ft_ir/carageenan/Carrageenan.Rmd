@@ -27,104 +27,407 @@ Carrageenan_Scores: per‐sample continuous Kappa, Iota, and Lambda indices.
 ```{r}
 # Required packages
 
-# 1) Load & reshape your FT-IR data
-#    – Excel file where column 1 = Sample name, columns 2… = wavenumbers (numeric)
-df_raw <- read_excel("ftir_data.xlsx") %>%
-  rename(Sample = 1) %>%
+
+# 1) Read your updated data
+df_raw <- read_csv("metaboanalyst_main_input_data.csv")
+
+# 2) Convert to long format (only spectral columns)
+df_ftir <- df_raw %>%
   pivot_longer(
-    cols = -Sample,
-    names_to  = "Wavenumber",
+    cols = matches("^[0-9]{3,4}$"),  # selects columns like "4000", "3999", etc.
+    names_to = "Wavenumber",
     values_to = "Absorbance"
   ) %>%
   mutate(Wavenumber = as.numeric(Wavenumber))
 
-# 2) Define the carrageenan signature bands
+# 2) Define your carrageenan bands
 bands <- tribble(
-  ~code,   ~name,                                   ~lo,   ~hi,
-  "S",     "Sulphate ester (O–SO₃⁻)",              1210,  1260,
-  "DA",    "C–O band of 3,6-anhydrogalactose",     1070,  1070,
-  "DA",    "3,6-anhydro-D-galactose",              928,   933,
-  "G4S",   "D-galactose-4-sulphate",               840,   850,
-  "G2S",   "D-galactose-2-sulphate",               825,   830,
-  "D2S",   "D-galactose-2,6-disulphate",           815,   820,
-  "DA2S",  "3,6-anhydro-D-galactose-2-sulphate",   800,   805
+  ~code,     ~name,                                   ~lo,   ~hi,
+  "S",       "Sulphate ester (O–SO₃⁻)",              1205,  1265,
+  "DA1070",  "C–O band of 3,6-anhydrogalactose",     1055,  1075,
+  "DA930",   "3,6-anhydro-D-galactose",              920,   935,
+  "G4S",     "D-galactose-4-sulphate",               840,   850,
+  "G2S",     "D-galactose-2-sulphate",               825,   830,
+  "D2S",     "D-galactose-2,6-disulphate",           815,   820,
+  "DA2S",    "3,6-anhydro-D-galactose-2-sulphate",   800,   805
 )
 
-# 3) Extract max peak intensity in each band & sample
-df_peaks <- df_raw %>%
+# 3) Extract max-peak intensity for each SAMPLE+GROUP & band
+df_peaks <- df_ftir %>%
   crossing(bands) %>%
   filter(Wavenumber >= lo, Wavenumber <= hi) %>%
   group_by(Sample, code, name, lo, hi) %>%
-  summarize(Peak = max(Absorbance, na.rm = TRUE), .groups = "drop")
+  slice_max(order_by = Absorbance, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  rename(Peak = Absorbance, Peak_Position = Wavenumber)
 
-# 4) Pivot so each band-code is its own column
+df_peaks %>%
+  group_by(Sample, code) %>%
+  summarize(n = n(), .groups = "drop") %>%
+  filter(n > 1)
+
+#
+```
+
+```{r}
+# --- Filter only the spectral range of interest (1400 to 700) ---
+# Create output folder if needed
+plot_dir <- "output_ftir/plots"
+dir_create(plot_dir, recurse = TRUE)
+
+# Filter bands to only those within 1400–700
+bands_subset <- bands %>% filter(lo <= 1400, hi >= 700)
+
+# Filter FTIR data to the same range
+df_ftir_subset <- df_ftir %>%
+  filter(Wavenumber <= 1400, Wavenumber >= 700)
+
+# Plot function for one sample
+plot_individual_spectrum <- function(sample_id) {
+  df_sample <- df_ftir_subset %>% filter(Sample == sample_id)
+
+  p <- ggplot(df_sample, aes(x = Wavenumber, y = Absorbance)) +
+    geom_line(color = "black", linewidth = 1) +
+    scale_x_reverse() +
+    labs(
+      title = paste("FTIR Spectrum:", sample_id),
+      x = "Wavenumber (cm⁻¹)",
+      y = "Absorbance"
+    ) +
+    theme_classic(base_size = 13)
+
+  for (i in seq_len(nrow(bands_subset))) {
+    band <- bands_subset[i, ]
+    center <- (band$lo + band$hi) / 2
+    band_height <- max(df_sample$Absorbance, na.rm = TRUE)
+
+    p <- p +
+      annotate("rect", xmin = band$lo, xmax = band$hi,
+               ymin = -Inf, ymax = Inf, alpha = 0.15, fill = "steelblue") +
+      annotate("text", x = center, y = band_height * 0.95,
+               label = band$code, angle = 90, vjust = -0.5, size = 3.5)
+  }
+
+  ggsave(
+    filename = file.path(plot_dir, paste0("spectrum_", sample_id, ".png")),
+    plot = p, width = 8, height = 5, bg = "white"
+  )
+}
+
+# Apply to all samples
+walk(unique(df_ftir_subset$Sample), plot_individual_spectrum)
+
+message("✅ Individual sample plots saved with shaded bands.")
+
+```
+
+
+```{r}
+# 4) Pivot so each 'code' is its own column
 df_peak_wide <- df_peaks %>%
   select(Sample, code, Peak) %>%
   pivot_wider(
     names_from  = code,
-    values_from = Peak,
-    values_fill = 0
-  )
+    values_from = Peak
+  ) %>%
+  # fill any missing (NA) peaks with 0
+  mutate(across(-c(Sample), ~ replace_na(.x, 0)))
 
-# 5) Arithmetic-means normalization of each sample’s peaks
-code_cols <- setdiff(names(df_peak_wide), "Sample")
+# 5) Arithmetic-mean normalization per sample
+val_cols <- df_peak_wide %>%
+  select(where(is.numeric)) %>%
+  names()
 df_norm <- df_peak_wide %>%
   rowwise() %>%
-  mutate(
-    mean_peak = mean(c_across(all_of(code_cols)), na.rm = TRUE)
-  ) %>%
+  mutate(mean_peak = mean(c_across(all_of(val_cols)), na.rm = TRUE)) %>%
   ungroup() %>%
   mutate(across(
-    all_of(code_cols),
+    all_of(val_cols),
     ~ ifelse(mean_peak > 0, .x / mean_peak, 0)
   )) %>%
   select(-mean_peak)
 
-# 6) Compute relative carrageenan scores
-scores <- df_norm %>%
+# 6) Calculate carrageenan indices and merge everything
+
+# Define the metadata columns you want to carry over
+meta_cols <- c("Sample", "Sample Code", "Location", "region", "variety", "Life_S", "car_per")
+
+# Extract unique metadata from the original input
+metadata_only <- df_raw %>%
+  select(all_of(meta_cols)) %>%
+  distinct()
+
+# Join metadata to normalized spectral data and calculate indices
+final_table <- df_norm %>%
+  left_join(metadata_only, by = "Sample") %>%
+  relocate(all_of(meta_cols)) %>%
   mutate(
-    Kappa_Index  = G4S     / DA,
-    Iota_Index   = DA2S    / DA,
-    Lambda_Index = (G2S + DA2S) / DA
+    Kappa_Index  = if_else(DA1070 > 0, G4S / DA1070, NA_real_),
+    Iota_Index   = if_else(DA1070 > 0, DA2S / DA1070, NA_real_),
+    Lambda_Index = if_else(DA1070 > 0, (G2S + DA2S) / DA1070, NA_real_)
   ) %>%
-  select(Sample, Kappa_Index, Iota_Index, Lambda_Index)
+  select(all_of(meta_cols), all_of(val_cols), Kappa_Index, Iota_Index, Lambda_Index)
 
-# 7) Build “Table 3”–style summary of normalized intensities
-table3 <- df_norm %>%
-  pivot_longer(
-    cols       = -Sample,
-    names_to   = "Letter_code",
-    values_to  = "Rel_Intensity"
-  ) %>%
-  left_join(bands, by = c("Letter_code" = "code")) %>%
-  mutate(
-    `Wavenumbers (cm⁻¹)` = paste0(lo, "–", hi),
-    `Functional group`   = name
-  ) %>%
-  select(`Wavenumbers (cm⁻¹)`, `Functional group`, Letter_code,
-         Sample, Rel_Intensity) %>%
-  pivot_wider(
-    names_from  = Sample,
-    values_from = Rel_Intensity
-  ) %>%
-  arrange(lo) %>%
-  select(-lo, -hi, -name)
+# 7) Write one combined output table
+write_csv(final_table, "ftir_combined_results.csv")
 
-# 8) Write outputs to Excel
-write_xlsx(
-  list(
-    Table3_Intensities = table3,
-    Carrageenan_Scores  = scores
-  ),
-  path = "ftir_summary.xlsx"
-)
+# 8) Print preview
+cat("\n=== Combined Table: Metadata + Intensities + Scores ===\n")
+print(final_table)
 
-# 9) Print to console
+
+# 9) Print to console for quick check
 cat("\n=== Table 3 — Normalized Band Intensities ===\n")
 print(table3)
 
 cat("\n=== Carrageenan Relative Scores ===\n")
 print(scores)
 
+library(tidyverse)
+
+# --- 1. Read data ---
+df_raw <- read_csv("metaboanalyst_main_input_data.csv")
+
+# --- 2. Define metadata columns explicitly ---
+meta_cols <- c("Sample", "Sample Code", "Location", "region", "variety", "Life_S", "car_per")
+
+# --- 3. Convert to long format for FTIR bands ---
+df_ftir <- df_raw %>%
+  rename(SAMPLE = Sample) %>%  # Sample Code used as GROUP here
+  pivot_longer(
+    cols = matches("^[0-9]{3,4}$"),  # match numeric wavenumber columns like "4000"
+    names_to = "Wavenumber",
+    values_to = "Absorbance"
+  ) %>%
+  mutate(Wavenumber = as.numeric(Wavenumber))
+
+# --- 4. Define carrageenan bands ---
+bands <- tribble(
+  ~code,     ~name,                                   ~lo,   ~hi,
+  "S",       "Sulphate ester (O–SO₃⁻)",              1210,  1260,
+  "DA1070",  "C–O band of 3,6-anhydrogalactose",     1070,  1070,
+  "DA930",   "3,6-anhydro-D-galactose",              928,   933,
+  "G4S",     "D-galactose-4-sulphate",               840,   850,
+  "G2S",     "D-galactose-2-sulphate",               825,   830,
+  "D2S",     "D-galactose-2,6-disulphate",           815,   820,
+  "DA2S",    "3,6-anhydro-D-galactose-2-sulphate",   800,   805
+)
+
+# --- 5. Extract max peak intensity per band per sample ---
+df_peaks <- df_ftir %>%
+  crossing(bands) %>%
+  filter(Wavenumber >= lo, Wavenumber <= hi) %>%
+  group_by(SAMPLE, GROUP, code, name, lo, hi) %>%
+  slice_max(order_by = Absorbance, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  rename(Peak = Absorbance, Peak_Position = Wavenumber)
+
+# --- 6. Pivot wide: each band as a column ---
+df_peak_wide <- df_peaks %>%
+  select(SAMPLE, GROUP, code, Peak) %>%
+  pivot_wider(
+    names_from  = code,
+    values_from = Peak
+  ) %>%
+  mutate(across(-c(SAMPLE, GROUP), ~ replace_na(.x, 0)))  # fill missing with 0
+
+# --- 7. Normalize by mean peak intensity ---
+val_cols <- setdiff(names(df_peak_wide), c("SAMPLE", "GROUP"))
+df_norm <- df_peak_wide %>%
+  rowwise() %>%
+  mutate(mean_peak = mean(c_across(all_of(val_cols)), na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(across(
+    all_of(val_cols),
+    ~ ifelse(mean_peak > 0, .x / mean_peak, 0)
+  )) %>%
+  select(-mean_peak)
+
+# --- 8. Merge metadata from original file ---
+metadata_only <- df_raw %>%
+  select(all_of(meta_cols)) %>%
+  distinct()
+
+final_table <- df_norm %>%
+  left_join(metadata_only, by = c("SAMPLE" = "Sample")) %>%
+  relocate(all_of(meta_cols)) %>%
+  mutate(
+    Kappa_Index  = if_else(DA1070 > 0, G4S / DA1070, NA_real_),
+    Iota_Index   = if_else(DA1070 > 0, DA2S / DA1070, NA_real_),
+    Lambda_Index = if_else(DA1070 > 0, (G2S + DA2S) / DA1070, NA_real_)
+  )
+
+# --- 9. Write output ---
+write_csv(final_table, "ftir_combined_results.csv")
+
+# --- 10. Print preview ---
+cat("\n=== Combined Table: Metadata + Intensities + Scores ===\n")
+print(final_table %>% select(all_of(meta_cols), Kappa_Index, Iota_Index, Lambda_Index))
+
+cat("\n=== Table 3 — Normalized Band Intensities ===\n")
+print(final_table %>% select(SAMPLE, all_of(val_cols)))
+
+cat("\n=== Carrageenan Relative Scores ===\n")
+print(final_table %>% select(SAMPLE, Kappa_Index, Iota_Index, Lambda_Index))
+
 ```
+```{r}
+
+# Step 2: call mixOmics from Bioconductor
+library("mixOmics")
+
+# --- Define input and output ---
+data_path <- "ftir_combined_results_cleaned.csv"
+plot_dir  <- "output_ftir/plots"
+report_dir <- "output_ftir/reports"
+dir.create(plot_dir, recursive = TRUE, showWarnings = FALSE)
+
+dir.create(report_dir, recursive = TRUE, showWarnings = FALSE)
+
+# --- Load and clean the data ---
+df <- read_csv(data_path)
+
+# --- Filter samples: remove F. Glom and weak carrageenan samples ---
+df_filtered <- df  %>%
+  filter(!(Iota_Index < 0.3 & Kappa_Index < 0.3 & Lambda_Index < 0.3))
+
+# --- Variables for analysis ---
+num_vars <- c("D2S", "DA1070", "DA2S", "DA930", "G2S", "G4S", "S",
+              "Kappa_Index", "Iota_Index", "Lambda_Index")
+
+# --- Helper function to run and save PLS-DA analysis ---
+run_plsda_analysis <- function(df_input, group_column, ncomp = 3, plot_prefix = "plsda") {
+  df_clean <- df_input %>%
+    drop_na(all_of(num_vars), !!sym(group_column))
+
+  # Use dplyr::select to avoid masking issues
+  X <- df_clean %>%
+    dplyr::select(all_of(num_vars)) %>%
+    scale() %>%
+    as.matrix()
+
+  Y <- as.factor(df_clean[[group_column]])
+
+  # Run PLS-DA
+  plsda_res <- plsda(X, Y, ncomp = ncomp)
+
+  # Save PLS-DA individual plot
+png(filename = file.path(plot_dir, paste0(plot_prefix, "_", group_column, "_indiv.png")),
+    width = 800, height = 600)
+plotIndiv(plsda_res, group = Y, legend = TRUE,
+          title = paste("PLS-DA:", group_column), ellipse = TRUE)
+dev.off()
+
+  # Run cross-validation
+  set.seed(123)
+  perf_res <- perf(plsda_res, validation = "Mfold", folds = 5, nrepeat = 10, progressBar = TRUE)
+
+  # Save performance plot
+  png(filename = file.path(plot_dir, paste0(plot_prefix, "_", group_column, "_perf.png")), width = 800, height = 600)
+ plot(perf_res, col = color.mixo(1:3), sd = TRUE)
+  dev.off()
+
+  # Save VIP scores
+  vip_scores <- map_dfr(1:ncomp, function(i) {
+    v <- selectVar(plsda_res, comp = i)$value
+    tibble(Variable = rownames(v), VIP = v[,"value.var"], Component = paste0("Comp", i))
+  })
+
+  write_csv(vip_scores, file.path(report_dir, paste0(plot_prefix, "_", group_column, "_vip_scores.csv")))
+
+  # Save explained variance bar plot
+  explained_var <- plsda_res$prop_expl_var$X[1:ncomp] * 100
+  explained_df <- tibble(
+    Component = paste0("Comp", 1:ncomp),
+    Variance = round(explained_var, 2)
+  )
+
+  var_plot <- ggplot(explained_df, aes(x = Component, y = Variance)) +
+    geom_col(fill = "steelblue") +
+    geom_text(aes(label = paste0(Variance, "%")), vjust = -0.5, size = 4) +
+    labs(title = "PLS-DA: Variance Explained by Component",
+         y = "Explained Variance (%)", x = "Component") +
+    theme_minimal(base_size = 13)
+
+  ggsave(
+    filename = file.path(plot_dir, paste0(plot_prefix, "_", group_column, "_explained_variance.png")),
+    plot = var_plot, width = 7, height = 5, bg = "white"
+  )
+
+  # Return result list
+  list(plsda = plsda_res, perf = perf_res)
+}
+
+# --- Run analyses ---
+# 1. Region-based grouping
+res_region <- run_plsda_analysis(df_filtered, group_column = "Location", ncomp = 4, plot_prefix = "region")
+
+
+# 2. Life_S subset: Tetra vs Carp
+df_var_subset <- df_filtered %>%
+  filter(Location %in% c("Mendieta", "CC_7H"))
+
+res_life_S <- run_plsda_analysis(df_var_subset, group_column = "variety", ncomp = 4, plot_prefix = "variety")
+
+
+
+```
+```{r}
+```{r non-parametric-carrageenan-inclusive, message=FALSE, warning=FALSE}
+
+# --- Load and Prepare Data ---
+# data <- read_csv("your_data.csv")  # Replace with actual data path
+
+# Filter to include all samples and non-NA carrageenan values
+df_filtered <- df_filtered %>%
+  drop_na(car_per)
+
+# ------------------------
+# 1. Kruskal-Wallis Tests
+# ------------------------
+
+kruskal_variety <- df_filtered %>%
+  kruskal_test(car_per ~ variety)
+
+kruskal_life <- df_filtered %>%
+  kruskal_test(car_per ~ Life_S)
+
+# ------------------------
+# 2. Pairwise Mann-Whitney U Tests (with Bonferroni Correction)
+# ------------------------
+
+pairwise_life <- df_filtered %>%
+  pairwise_wilcox_test(car_per ~ Life_S, p.adjust.method = "bonferroni") %>%
+  arrange(p.adj)
+
+# ------------------------
+# 3. Save Summary Table
+# ------------------------
+
+# Save results as CSV (create folder first if needed)
+output_dir <- "output/carrageenan_stats"
+if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
+
+write_csv(pairwise_life, file.path(output_dir, "life_stage_pairwise_nonparametric.csv"))
+
+# Display summary in markdown
+pairwise_life
+```
+
+Kruskal-Wallis Results (all samples):
+By Variety: significant — variety continues to influence carrageenan concentration.
+
+By Life Stage: Still shows a significant difference across groups.
+
+Mann-Whitney U Posthoc Results:
+Carp vs Unknown again stands out with a low raw p-value (≈ 0.036), though not significant after Bonferroni correction (adjusted p ≈ 0.36).
+
+Other pairwise differences (Carp vs Gam, Gam vs Gam/Tetra, etc.) remain non-significant, but the Carp vs Gam comparison's p-value dropped slightly (now ≈ 0.19), suggesting a trend worth further attention with more data.
+### 📚 References
+- **Kruskal-Wallis Test**: Kruskal, W. H., & Wallis, W. A. (1952). *Use of ranks in one-criterion variance analysis*. JASA, 47(260), 583–621.
+- **Mann-Whitney U Test**: Mann, H. B., & Whitney, D. R. (1947). *On a Test of Whether One of Two Random Variables is Stochastically Larger than the Other*. Ann. Math. Stat., 18(1), 50–60.
+- **Bonferroni Correction**: Dunn, O. J. (1961). *Multiple Comparisons Among Means*. JASA, 56(293), 52–64.
+
+```
+
 
