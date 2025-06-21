@@ -6,10 +6,6 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
-# Load required libraries
-library(readxl)
-library(dplyr)
-library(ggplot2)
 
 # Read in your Excel file
 df <- read_excel("morph_clean.xlsx")
@@ -19,12 +15,12 @@ names(df) <- gsub(" |\\.", "_", names(df))
 
 # Summarize data by Location, Life Stage, and Variety
 summary_table <- df %>%
-  group_by(Location, Life_S, variety) %>%
+  group_by(location, Life_S, variety) %>%
   summarise(
     count = n(),
-    mean_height = mean(Height, na.rm = TRUE),
-    mean_blade_width = mean(Blade_width_largest_at_widest_point_mm, na.rm = TRUE),
-    mean_divisions = mean(Divisions, na.rm = TRUE),
+    mean_height = mean(height_cm, na.rm = TRUE),
+    mean_blade_width = mean(bladewidth_mm, na.rm = TRUE),
+    mean_divisions = mean(divisions, na.rm = TRUE),
     mean_dry_weight = mean(dry_weight, na.rm = TRUE),
     .groups = "drop"
   )
@@ -39,10 +35,10 @@ summarize_height <- function(data, group_var) {
     group_by(.data[[group_var]]) %>%
     summarise(
       n = n(),
-      mean_height = mean(Height, na.rm = TRUE),
-      Q1 = quantile(Height, 0.25, na.rm = TRUE),
-      Median = quantile(Height, 0.50, na.rm = TRUE),
-      Q3 = quantile(Height, 0.75, na.rm = TRUE),
+      mean_height = mean(height_cm, na.rm = TRUE),
+      Q1 = quantile(height_cm, 0.25, na.rm = TRUE),
+      Median = quantile(height_cm, 0.50, na.rm = TRUE),
+      Q3 = quantile(height_cm, 0.75, na.rm = TRUE),
       .groups = "drop"
     )
 }
@@ -64,22 +60,134 @@ print(height_by_life)
 write.csv(height_by_life, file = file.path(output_dir, "height_summary_by_life_stage.csv"), row.names = FALSE)
 
 # Summary by Location
-height_by_location <- summarize_height(df, "Location")
+height_by_location <- summarize_height(df, "location")
 cat("\n--- Height Summary by Location ---\n")
 print(height_by_location)
 write.csv(height_by_location, file = file.path(output_dir, "height_summary_by_location.csv"), row.names = FALSE)
 
-# Generate and save plots by Location
-plot_morph_var(df, "Height", "Location", plot_dir)
-plot_morph_var(df, "Blade_width_largest_at_widest_point_mm", "Location", plot_dir)
-plot_morph_var(df, "Divisions", "Location", plot_dir)
-plot_morph_var(df, "dry_weight", "Location", plot_dir)
-
-# Additional plots by variety
-plot_morph_var(df, "Height", "variety", plot_dir)
-plot_morph_var(df, "Blade_width_largest_at_widest_point_mm", "variety", plot_dir)
-plot_morph_var(df, "dry_weight", "variety", plot_dir)
-
 
 ```
+#Panel plot
+```{r}
+# 1. Filter your data
+df_filtered <- df %>%
+  dplyr::filter(location %in% c("Mendieta", "7H", "Caro Caido")) %>%
+  mutate(
+    Life_S = case_when(
+      Life_S %in% c("Gam", "Tetra", "Gam/Tetra") ~ "Gam/Tetra",
+      Life_S == "Carp" ~ "Carp",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  dplyr::filter(!is.na(Life_S))  # Remove Unknown and anything else recoded as NA
+# 2. Color palette (by Life Stage)
+group_colors <- c(
+  "Gam/Tetra" = "#33a02c",  # Green (unchanged)
+  "Carp"      = "#7b1f52"   # Dark reddish-purple
+)
+
+# 3. Y-axis display names
+display_names <- c(
+  "height_cm" = "Height (cm)",
+  "dry_weight" = "Dry Weight (g)",
+  "bladewidth_mm" = "Blade Width (mm)"
+)
+#Outliers function
+replace_outliers_multi <- function(df, vars, group_vars = c("variety", "Life_S")) {
+  for (var in vars) {
+    df <- df %>%
+      group_by(across(all_of(group_vars))) %>%
+      mutate(
+        Q1 = quantile(.data[[var]], 0.25, na.rm = TRUE),
+        Q3 = quantile(.data[[var]], 0.75, na.rm = TRUE),
+        IQR = Q3 - Q1,
+        lower = Q1 - 2 * IQR,
+        upper = Q3 + 2 * IQR,
+        "{var}" := ifelse(.data[[var]] < lower | .data[[var]] > upper, NA, .data[[var]])
+      ) %>%
+      ungroup() %>%
+      dplyr::select(-Q1, -Q3, -IQR, -lower, -upper)
+  }
+  return(df)
+}
+
+# Use on your cleaned + filtered data
+df_cleaned <- replace_outliers_multi(
+  df_filtered,
+  vars = c("height_cm", "dry_weight", "bladewidth_mm")
+)
+
+make_morph_plot <- function(data, yvar) {
+  ysym <- rlang::sym(yvar)
+  
+  ggplot(data, aes(x = variety, y = !!ysym, fill = Life_S)) +
+    geom_boxplot(alpha = 0.8, position = position_dodge(width = 0.75), outlier.shape = NA) +
+    geom_jitter(aes(color = Life_S),
+                position = position_jitterdodge(jitter.width = 0.15, dodge.width = 0.75),
+                alpha = 0.9, size = 2.5, shape = 16) +  # Increased size
+    scale_fill_manual(values = group_colors) +
+    scale_color_manual(values = group_colors) +
+    labs(y = display_names[[yvar]]) +
+    theme_minimal(base_size = 16) +  # Increased base font size
+    theme(
+      plot.title         = element_blank(),
+      axis.title.x       = element_blank(),
+      axis.title.y       = element_text(size = 24, face = "bold", margin = margin(r = 20)),
+      axis.text.x        = element_blank(),
+      axis.text.y        = element_text(size = 20),
+      axis.ticks.x       = element_blank(),
+      axis.ticks.y       = element_line(size = 1),
+      axis.line.x        = element_blank(),
+      axis.line.y        = element_line(size = 1),
+      legend.position    = "none",
+      panel.grid.major.x = element_blank(),
+      panel.grid.minor.x = element_blank()
+    )
+}
+
+Style_plot_bottom_row <- function(p) {
+  p + theme(
+    axis.title.x = element_text(
+      size = 24, face = "bold",
+      margin = margin(t = 20)  # add more space above title
+    ),
+    axis.text.x = element_text(
+      size = 20, angle = 45, hjust = 1, vjust = 1,
+      margin = margin(t = 10)  # add space below text
+    ),
+    axis.ticks.x = element_line(size = 1),
+    axis.line.x  = element_line(size = 1),
+    plot.margin = margin(b = 20, t = 10, l = 10, r = 10)  # extra space around the plot
+  )
+}
+
+# 6. Generate plots
+plot_vars <- c("height_cm", "dry_weight", "bladewidth_mm")
+plots_morph <- lapply(plot_vars, function(var) make_morph_plot(df_filtered, var))
+names(plots_morph) <- plot_vars
+
+# 7. Apply bottom style to last row
+if (length(plots_morph) >= 1) {
+  plots_morph[[length(plots_morph)]] <- style_plot_bottom_row(plots_morph[[length(plots_morph)]])
+}
+
+# 8. Combine plots
+full_panel <- wrap_plots(plots_morph, ncol = 1)
+
+# 9. Save
+ggsave("output_all/plots/morphometric_panel_filtered.png",
+       full_panel, width = 10, height = 15, dpi = 300)
+
+# 10. Optional: legend
+legend_plot <- make_morph_plot(df_filtered, "height_cm") +
+  theme(legend.position = "right") +
+  guides(fill = guide_legend(title = "Life Stage"))
+
+legend <- cowplot::get_legend(legend_plot)
+
+ggsave("output_all/plots/morphometric_legend.png",
+       plot = cowplot::plot_grid(legend), width = 4, height = 3, dpi = 300, bg = "white")
+
+```
+
 

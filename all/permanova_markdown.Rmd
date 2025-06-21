@@ -305,7 +305,6 @@ for (f in c("Life_S", "Location")) {
   disp <- betadisper(dist_mat, meta_df[[f]])
   png(paste0("output/key_figures/dispersion_", f, ".png"), width = 800, height = 600)
   plot(disp, main = paste("Dispersion by", f))
-  dev.off()
 }
 #Outliers
 # Compute Mahalanobis distances from the center
@@ -321,12 +320,6 @@ outliers <- which(mahal_dist > threshold)
 cat("Potential outliers based on Mahalanobis distance:\n")
 print(rownames(num_df)[outliers])
 
-#
-# Mark outliers in PCoA plotting data
-plot_df$outlier <- rownames(plot_df) %in% rownames(num_df)[outliers]
-# Prepare outlier data for overlay (join with plot_df to get coordinates)
-outlier_df <- plot_df %>% 
-  filter(join_id %in% rownames(num_df)[outliers])
 
 # --- PCoA plot with biplot ---
 pcoa <- cmdscale(dist_mat, eig = TRUE, k = 2)
@@ -334,6 +327,12 @@ site_scores <- as.data.frame(pcoa$points)
 colnames(site_scores) <- c("PC1", "PC2")
 site_scores$join_id <- rownames(site_scores)
 plot_df <- left_join(site_scores, meta_df, by = "join_id")
+
+# Mark outliers in PCoA plotting data
+plot_df$outlier <- rownames(plot_df) %in% rownames(num_df)[outliers]
+# Prepare outlier data for overlay (join with plot_df to get coordinates)
+outlier_df <- plot_df %>% 
+  filter(join_id %in% rownames(num_df)[outliers])
 
 # --- Fit environmental variables using envfit ---
 fit <- envfit(pcoa, num_df, perm = 999)
@@ -445,7 +444,6 @@ plot(varpart_model,
      Xnames = c("Life Stage", "Location"),
      id.size = 1.2, cex = 1.4, 
      main = "Variation Partitioning of Nutrient Traits")
-dev.off()
 
 # --- Dendrogram colored by Location, labeled by Life Stage ---
 hc <- hclust(dist_mat, method = "average")
@@ -470,7 +468,6 @@ dend <- dend %>%
 png("output/key_figures/dendrogram_lifestage_colored_by_location.png", width = 1000, height = 600)
 plot(dend, main = "Dendrogram Labeled by Life Stage, Colored by Location", font.main = 2)
 legend("topright", legend = location_levels, fill = palette, title = "Location", cex = 0.9)
-dev.off()
 ##
 
 

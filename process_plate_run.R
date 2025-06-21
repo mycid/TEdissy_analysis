@@ -41,7 +41,11 @@ required_packages <- c(
   "rstatix",
   "PMCMRplus",
   "mixOmics",
-  "tibble"
+  "tibble",
+  "ggdendro",
+  "forcats",
+  "baseline",
+  "signal"
 )
 for(pkg in required_packages) {
   if (!requireNamespace(pkg, quietly = TRUE)) {
@@ -1583,3 +1587,128 @@ save_object <- function(object,
   
   invisible(out_path)
 }
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+summarize_clean_numeric <- function(df, group_var, numeric_vars) {
+  df_clean <- df
+  for (var in numeric_vars) {
+    x <- as.numeric(df_clean[[var]])
+    x[is.nan(x) | is.infinite(x)] <- NA
+    x[is.na(x)] <- mean(x, na.rm = TRUE)
+    df_clean[[var]] <- x
+  }
+  
+  summary_df <- df %>%
+    dplyr::select(all_of(c(group_var, numeric_vars))) %>%
+    tidyr::pivot_longer(cols = all_of(numeric_vars), names_to = "Variable", values_to = "Value") %>%
+    dplyr::group_by(.data[[group_var]], Variable) %>%
+    dplyr::summarise(
+      Mean = mean(Value, na.rm = TRUE),
+      SE = sd(Value, na.rm = TRUE) / sqrt(length(na.omit(Value))),
+      N = length(na.omit(Value)),
+      .groups = "drop"
+    )
+  
+  for (col in c("Mean", "SE")) {
+    x <- summary_df[[col]]
+    x[is.nan(x) | is.infinite(x)] <- NA
+    x[is.na(x)] <- mean(x, na.rm = TRUE)
+    summary_df[[col]] <- x
+  }
+  
+  group_sym <- sym(group_var)
+  summary_df <- summary_df %>%
+    filter(!is.na(!!group_sym) & !is.nan(!!group_sym) & !!group_sym != "")
+  
+  # ✅ Ensure all strings are valid UTF-8
+  summary_df <- summary_df %>%
+    mutate(across(where(is.character), ~ iconv(., from = "", to = "UTF-8", sub = "byte")))
+  
+  return(summary_df)
+}
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+# gt() table generator function
+# gt() table generator function
+make_gt_table <- function(summary_df, group_var_label, title_label, colorize = TRUE) {
+  gt_table <- summary_df %>%
+    pivot_wider(names_from = Variable, values_from = c(Mean, SE, N)) %>%
+    gt()
+  
+  if (colorize) {
+    gt_table <- gt_table %>%
+      data_color(
+        columns = starts_with("Mean_"),
+        palette = "Blues",
+        domain = c(global_min_mean_all_nutrients, global_max_mean_all_nutrients)
+      )
+  }
+  
+  gt_table <- gt_table %>%
+    {
+      gt_obj <- .
+      for (var_name in numeric_vars_all_nutrients) {
+        mean_col <- sym(paste0("Mean_", var_name))
+        se_col <- sym(paste0("SE_", var_name))
+        n_col  <- sym(paste0("N_", var_name))
+        if (all(as.character(c(mean_col, se_col, n_col)) %in% names(gt_obj[["_data"]]))) {
+          gt_obj <- gt_obj %>%
+            fmt_number(columns = c(!!mean_col, !!se_col), decimals = 2) %>%
+            fmt_integer(columns = !!n_col) %>%
+            cols_merge(columns = c(!!mean_col, !!se_col, !!n_col),
+                       pattern = "{1} ± {2} (N={3})") %>%
+            cols_label(!!mean_col := var_name)
+        }
+      }
+      gt_obj
+    } %>%
+    cols_label(!!sym(group_var_label) := md(paste0("**", gsub("_", " ", group_var_label), "**"))) %>%
+    tab_header(title = md(paste0("**Summary of All Nutrients by ", title_label, "**"))) %>%
+    opt_horizontal_padding(scale = 2) %>%
+    tab_options(
+      table.border.top.color = "lightgray",
+      table.border.bottom.color = "lightgray",
+      heading.border.bottom.color = "lightgray",
+      column_labels.border.bottom.color = "lightgray"
+    ) %>%
+    tab_footnote(
+      footnote = "Values represent Mean ± Standard Error (SE) (N = number of samples).",
+      locations = cells_column_labels(columns = starts_with("Mean_"))
+    )
+  
+  return(gt_table)
+}
+
+

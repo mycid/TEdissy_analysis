@@ -75,57 +75,12 @@ for (file in all_files) {
 #Code to collapse factors
 desired_location_order <- c("Mendieta", "Concession", "Caro Caido", "7H", "Powder Ilo", "Ilo mariculture")
 life_s_levels           <- c("Carp", "Gam", "Gam/Tetra", "Tetra", "Unknown")
-
-#pe_rep_final$Life_S <- fct_collapse(pe_rep_final$Life_S, "Gam/Tetra" = c("Gam", "Tetra"))
-pe_rep_final$Life_S <- factor(pe_rep_final$Life_S, levels = life_s_levels)
-
-#pr_rep_final$Life_S <- fct_collapse(pr_rep_final$Life_S, "Gam/Tetra" = c("Gam", "Tetra"))
-pr_rep_final$Life_S <- factor(pr_rep_final$Life_S, levels = c("Carp", "Gam/Tetra", "Unknown"))
-
-carb_rep_final$Life_S <- fct_collapse(carb_rep_final$Life_S, "Gam/Tetra" = c("Gam", "Tetra"))
-carb_rep_final$Life_S <- factor(carb_rep_final$Life_S, levels = c("Carp", "Gam/Tetra", "Unknown"))
-
-car_rep_final$Life_S <- fct_collapse(car_rep_final$Life_S, "Gam/Tetra" = c("Gam", "Tetra"))
-car_rep_final$Life_S <- factor(car_rep_final$Life_S, levels = c("Carp", "Gam/Tetra", "Unknown"))
-
-ash_rep_final$Life_S <- fct_collapse(ash_rep_final$Life_S, "Gam/Tetra" = c("Gam", "Tetra"))
-ash_rep_final$Life_S <- factor(ash_rep_final$Life_S, levels = c("Carp", "Gam/Tetra", "Unknown"))
-
-
-# repeat as needed
-
-# For Location (example)
-desired_location_order <- c("Mendieta", "Concession", "Caro Caido", "7H", "Powder Ilo", "Ilo mariculture"  )  # or whatever order you want
-
-pr_rep_final$Location <- factor(pr_rep_final$Location, levels = desired_location_order)
-carb_rep_final$Location <- factor(carb_rep_final$Location, levels = desired_location_order)
-ash_rep_final$Location <- factor(ash_rep_final$Location, levels = desired_location_order)
-car_rep_final$Location <- factor(car_rep_final$Location, levels = desired_location_order)
-pe_rep_final$Location <- factor(pe_rep_final$Location, levels = desired_location_order)
-
-# Define factor levels and color palette
-  # or locations
+ # or whatever order you want
 
 ```
 
 ## Make the plots
 ```{r}
-########################## subset protein
-# Protein
-pr_location <- pr_rep_final %>%
-  filter(!Location %in% c("Lima Market Freeze Dry", "Ilo Freeze Dry", "Ilo oven dry", "Ilo Fresh", "Lima Market Fresh"))
-
-pr_location_cham <- pr_rep_final %>%
-  filter(!variety %in% c("F.Glom"))
-
-########################## Subset PE
-pe_location <- pe_rep_final %>%
-  filter(!Location %in% c("Lima Market Freeze Dry", "Ilo Freeze Dry", "Ilo oven dry", "Ilo Fresh", "Lima Market Fresh"))
-
-pe_location_cham <- pe_location %>%
-  filter(!variety %in% c("F. Glom"))
-# 6. Run group comparisons and print outputs
-
 
 # Apply color palette
 group_colors <- c(
@@ -148,7 +103,7 @@ group_colors <- c(
 
 # ---- Protein ----
 prot_plot_LS <- compare_groups(
-  data           = pr_location_cham,
+  data           = full_merged_data_manual_fix,
   response_var   = "Protein_mg_per_g_mean",
   group_var      = "Life_S",
   subfolder_name = "Protein_LifeS"
@@ -156,7 +111,7 @@ prot_plot_LS <- compare_groups(
     scale_color_manual(values = group_colors)
 
 prot_plot_LOC <- compare_groups(
-  data           = pr_location_cham,
+  data           = full_merged_data_manual_fix,
   response_var   = "Protein_mg_per_g_mean",
   group_var      = "Location",
   subfolder_name = "Protein_region"
@@ -165,7 +120,7 @@ prot_plot_LOC <- compare_groups(
 
 # ---- Phycoerythrin ----
 pe_plot_LS <- compare_groups(
-  data           = pe_location_cham,
+  data           = full_merged_data_manual_fix,
   response_var   = "PE_mg_per_g_sample_mean",
   group_var      = "Life_S",
   subfolder_name = "PE_LifeS"
@@ -173,7 +128,7 @@ pe_plot_LS <- compare_groups(
     scale_color_manual(values = group_colors)
 
 pe_plot_LOC <- compare_groups(
-  data           = pe_location_cham,
+  data           = full_merged_data_manual_fix,
   response_var   = "PE_mg_per_g_sample_mean",
   group_var      = "Location",
   subfolder_name = "PE_region"
@@ -182,7 +137,7 @@ pe_plot_LOC <- compare_groups(
 
 # ---- Ash ----
 ash_plot_LS <- compare_groups(
-  data           = ash_rep_final,
+  data           = full_merged_data_manual_fix,
   response_var   = "ash_per_mean",
   group_var      = "Life_S",
   subfolder_name = "Ash_LifeS"
@@ -190,7 +145,7 @@ ash_plot_LS <- compare_groups(
     scale_color_manual(values = group_colors)
 
 ash_plot_LOC <- compare_groups(
-  data           = ash_rep_final,
+  data           = full_merged_data_manual_fix,
   response_var   = "ash_per_mean",
   group_var      = "region",
   subfolder_name = "Ash_region"
@@ -199,7 +154,7 @@ ash_plot_LOC <- compare_groups(
 
 # ---- Carbohydrates ----
 carb_plot_LS <- compare_groups(
-  data           = carb_rep_final,
+  data           = full_merged_data_manual_fix,
   response_var   = "carb_mg_per_g_mean",
   group_var      = "Life_S",
   subfolder_name = "Carbohydrates_LifeS"
@@ -207,7 +162,7 @@ carb_plot_LS <- compare_groups(
     scale_color_manual(values = group_colors)
 
 carb_plot_LOC <- compare_groups(
-  data           = carb_rep_final,
+  data           = full_merged_data_manual_fix,
   response_var   = "carb_mg_per_g_mean",
   group_var      = "region",
   subfolder_name = "Carbohydrates_region"
@@ -216,7 +171,7 @@ carb_plot_LOC <- compare_groups(
 
 # ---- Carrageenan ----
 car_plot_LS <- compare_groups(
-  data           = car_rep_final,
+  data           = full_merged_data_manual_fix,
   response_var   = "car_per",
   group_var      = "Life_S",
   subfolder_name = "Carrageenan_LifeS"
@@ -224,7 +179,7 @@ car_plot_LS <- compare_groups(
     scale_color_manual(values = group_colors)
 
 car_plot_LOC <- compare_groups(
-  data           = car_rep_final,
+  data           = full_merged_data_manual_fix,
   response_var   = "car_per",
   group_var      = "region",
   subfolder_name = "Carrageenan_region"
@@ -236,7 +191,13 @@ car_plot_LOC <- compare_groups(
 ## Make lists of the plots
 ```{r}
 # Nutrients (rows)
-nutrients <- c("Protein", "Carbohydrates", "ash", "Carrageenan", "Phycoerythrin")
+display_names <- c(
+  "Protein_mg_per_g_mean" = "Protein (mg/g)",
+  "carb_mg_per_g_mean" = "Carbohydrates (mg/g)",
+  "ash_per_mean" = "Ash (%)",
+  "PE_mg_per_g_sample_mean" = "Phycoerythrin (mg/g)",
+  "car_per" = "Carrageenan (%)"
+)
 
 # Two grouping variables (columns): Life_Stage and region
 # You should have 10 plots in total
@@ -265,42 +226,44 @@ group_colors <- c(
   "Unknown"         = "#808080"  # Grey (kept neutral for 'Unknown')
 )
 
-
+# Helper function to insert a line break after first space or slash
+wrap_label <- function(x) {
+  sub("([/ ]+)", "\n", x)  # Replace first space or slash with newline
+}
 
 # Function to apply styling (now only handles appearance/visibility of titles, not their text)
 style_plot <- function(p, row, col, total_rows) {
   p +
-    # Harmonized FILL colors (for the box interior), with no legend
+    # Wrap x-axis labels (for grouped plots)
+    scale_x_discrete(labels = wrap_label) +
+
+    # Colors
     scale_fill_manual(values = group_colors, guide = "none") +
 
     theme_minimal(base_size = 14) +
     theme(
       plot.title         = element_blank(),
 
-      # Axis titles:
-      # X-axis title visibility (will only appear if set by labs() later)
-      axis.title.x       = if (row == total_rows) { # Only make text visible for bottom row
+      # X-axis title visibility
+      axis.title.x       = if (row == total_rows) {
                              element_text(size = 18, face = "bold", margin = margin(t = 15))
                            } else {
-                             element_blank() # Hide title for all other rows
+                             element_blank()
                            },
 
-      # Y-axis title only on the left column (col 1)
+      # Y-axis title only for left column
       axis.title.y       = if (col == 1) element_text(size = 18, face = "bold", margin = margin(r = 15)) else element_blank(),
 
-      # Axis text (tick labels):
-      # X-axis text is now always on and larger (as per previous request)
-      axis.text.x        = element_text(size = 14, angle = 45, hjust = 1, vjust = 1, color = "black"), # Larger, rotated for readability
-      axis.text.y        = element_text(size = 14), # Keep y-axis text visible and larger
-      axis.ticks.x       = element_line(size = 0.5, color = "black"), # X-axis ticks always on
-      axis.ticks.y       = element_line(size = 0.5), # Keep y-axis ticks
-      axis.line.x        = element_line(size = 0.5, color = "black"), # X-axis line always on
-      axis.line.y        = element_line(size = 0.5), # Keep y-axis line
-
-      # Remove all legends from individual plots
+      # Tick labels
+      axis.text.x        = element_text(size = 14, angle = 45, hjust = 0.5, vjust = 0.5, color = "black"),
+      axis.text.y        = element_text(size = 14),
+      axis.ticks.x       = element_line(size = 0.5, color = "black"),
+      axis.ticks.y       = element_line(size = 0.5),
+      axis.line.x        = element_line(size = 0.5, color = "black"),
+      axis.line.y        = element_line(size = 0.5),
       legend.position    = "none",
-      panel.grid.major.x = element_blank(), # Hide vertical grid lines
-      panel.grid.minor.x = element_blank()  # Hide minor vertical grid lines
+      panel.grid.major.x = element_blank(),
+      panel.grid.minor.x = element_blank()
     )
 }
 
@@ -313,6 +276,12 @@ num_rows <- length(plots_lifestage)
 plots_lifestage <- purrr::imap(plots_lifestage,
   ~ style_plot(.x, row = .y, col = 1, total_rows = num_rows) # Pass row index (.y) and col = 1
 )
+# Apply display_names to the y-axis labels of the left column (lifestage plots)
+nutrient_names <- names(display_names)
+
+plots_lifestage <- purrr::imap(plots_lifestage, function(p, i) {
+  p + labs(y = display_names[[nutrient_names[i]]])
+})
 plots_location <- purrr::imap(plots_location,
   ~ style_plot(.x, row = .y, col = 2, total_rows = num_rows) # Pass row index (.y) and col = 2
 )
