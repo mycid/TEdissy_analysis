@@ -67,13 +67,13 @@ for (file in excel_files) {
 ### Tidy photospectrometer input data into dataframes and correct blanks
 ```{r tidy-processing}
 # 1. Define which wells were used as blanks in each run
-blanks1 <- c("A01", "A02", "A03")
+#blanks1 <- c("A01", "A02", "A03")
 blanks2 <- c("H11", "H12")
 #
 # 2. Build named lists of raw datasets and their corresponding blank vectors
-listprot    <- list(pr1 = pr1, pr2 = pr2)
+listprot    <- list(pr2 = pr2)
 #
-listBlanks <- list(blanks1, blanks2)
+listBlanks <- list(blanks2)
 #
 # 3. Run the wrapper: it calls tidy_and_correct() on each dataset
 tidy_all(listprot, listBlanks)
@@ -104,12 +104,10 @@ if (!dir.exists(joined_weights_dir)) dir.create(joined_weights_dir, recursive = 
 
 # 1. Build weight and PE data frame lists
 list_weights <- list(
-  pr1_weights,
   pr2_weights
 )
 
 pr_list <- list(
-  pr1 = pr1_tidy, 
   pr2 = pr2_tidy
 )
 
@@ -193,49 +191,35 @@ intercept <- coef(model)[1]
 slope     <- coef(model)[2]
 
 # ---- Step 2: Harmonize inputs
-common_cols <- intersect(names(pr2_weights_joined), names(pr1_weights_joined))
-pr1_weights_joined <- pr1_weights_joined %>% mutate(weights = as.numeric(weights), date = parse_date_time(date, orders = c("ymd", "dmy", "mdy")))
+#common_cols <- intersect(names(pr2_weights_joined), names(pr1_weights_joined))
+#pr1_weights_joined <- pr1_weights_joined %>% mutate(weights = as.numeric(weights), date = parse_date_time(date, orders = c("ymd", "dmy", "mdy")))
 pr2_weights_joined <- pr2_weights_joined %>% mutate(weights = as.numeric(weights), date = parse_date_time(date, orders = c("ymd", "dmy", "mdy")))
 
 # ---- Step 3: Combine datasets and calculate concentrations
-pr_combined <- bind_rows(pr2_weights_joined[common_cols], pr1_weights_joined[common_cols])
+pr_combined <- pr2_weights_joined
+
+# Calculate mg/ml using standard curve
 pr_combined$con_mg_per_ml <- (pr_combined$X600 - intercept) / slope
-pr_combined$Protein_mg_total <- pr_combined$con_mg_per_ml * 0.5
-pr_combined$Protein_mg_per_g <- (pr_combined$Protein_mg_total / pr_combined$weights) * 1000
+
+# Calculate total mg in 200 ul reaction volume
+pr_combined$Protein_mg_in_reaction <- pr_combined$con_mg_per_ml * 0.2
+
+# Scale up from 200ul to total 500 ul supernatant (scaling factor = 25)
+pr_combined$Protein_mg_total <- pr_combined$Protein_mg_in_reaction * 25
+
+# Calculate mg analyte per g dry sample (weights in mg, so direct ratio)
+pr_combined$Protein_mg_per_g <- (pr_combined$Protein_mg_total / pr_combined$weights)*1000
 
 # ---- Step 4: Filter and factor runs
 pr_combined <- pr_combined %>%
-  filter(is.finite(Protein_mg_per_g), !is.na(Protein_mg_per_g)) %>%
+  dplyr::filter(is.finite(Protein_mg_per_g), !is.na(Protein_mg_per_g)) %>%
   mutate(run = as.factor(match(as.Date(date), unique(as.Date(date)))))
 
 # Save combined data
 write_csv(pr_combined, file.path(export_dir, "pr_combined.csv"))
 
-# ---- Step 5: Statistical tests
-t_test_result <- t.test(Protein_mg_per_g ~ run, data = pr_combined)
-wilcox_result <- wilcox.test(Protein_mg_per_g ~ run, data = pr_combined)
-
-# Save test summaries
-capture.output(t_test_result,   file = file.path(export_dir, "t_test_run_comparison.txt"))
-capture.output(wilcox_result,  file = file.path(export_dir, "wilcox_test_run_comparison.txt"))
-
-# ---- Step 6: Plot protein content by run
-protein_run_plot <- ggplot(pr_combined, aes(x = run, y = Protein_mg_per_g, fill = run)) +
-  geom_boxplot(outlier.shape = NA, width = 0.6) +
-  geom_jitter(width = 0.1, alpha = 0.5, color = "black") +
-  labs(title = "Protein Content by Run", x = "Run", y = "Protein (mg/g)") +
-  theme_minimal() +
-  theme(legend.position = "none", plot.title = element_text(hjust = 0.5))
-
-save_object(
-  object    = protein_run_plot,
-  filename  = "protein_content_by_run",
-  directory = "plots",
-  subdir    = "replicate_analysis/protein"
-)
-
 # ---- Step 7: Outlier detection
-df_runs12 <- pr_combined %>% filter(run %in% c("1", "2"))
+df_runs12 <- pr_combined %>% dplyr::filter(run %in% c("1", "2"))
 iqr_vals <- IQR(df_runs12$Protein_mg_per_g, na.rm = TRUE)
 q1 <- quantile(df_runs12$Protein_mg_per_g, 0.25, na.rm = TRUE)
 q3 <- quantile(df_runs12$Protein_mg_per_g, 0.75, na.rm = TRUE)
@@ -251,16 +235,17 @@ pr_combined <- pr_combined %>%
 # Save outlier-flagged data
 write_csv(pr_combined, file.path(export_dir, "pr_combined_with_outliers.csv"))
 
-pr_combined_clean <- pr_combined %>% filter(outlier_flag == "normal")
+pr_combined_clean <- pr_combined %>% dplyr::filter(outlier_flag == "normal")
 write_csv(pr_combined_clean, file.path(export_dir, "pr_combined_clean.csv"))
 
 # ---- Step 8: Replicate analysis
+
+
+
 analyze_replicates(
-  data          = pr_combined_clean,
+  data          = pr_combined,
   id_col        = "ID",
-  join_col      = "join_id",
   weight_col    = "weights",
-  date_col      = "date",
   output_prefix = "pr_rep",
   choose_best_3 = TRUE,
   dir           = export_dir
@@ -341,7 +326,7 @@ graph_replicates_custom_error(
 )
 
 pr_location <- pr_rep_final %>%
-  filter(!Location %in% c("Lima Market Freeze Dry", "Ilo Freeze Dry", "Ilo oven dry", "Ilo Fresh", "Lima Market Fresh"))
+  dplyr::filter(!Location %in% c("Lima Market Freeze Dry", "Ilo Freeze Dry", "Ilo oven dry", "Ilo Fresh", "Lima Market Fresh"))
 
 pr_location_cham <- pr_rep_final %>%
   filter(!variety %in% c("F.Glom"))

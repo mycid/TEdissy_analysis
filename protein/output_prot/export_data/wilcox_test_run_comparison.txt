@@ -2,6 +2,6 @@
 	Wilcoxon rank sum test with continuity correction
 
 data:  Protein_mg_per_g by run
-W = 3325, p-value = 0.0008388
+W = 4144, p-value = 2.239e-11
 alternative hypothesis: true location shift is not equal to 0
 

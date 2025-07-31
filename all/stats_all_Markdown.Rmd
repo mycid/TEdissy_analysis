@@ -1,0 +1,126 @@
+author: "Trevor Eakes"
+date: "`r Sys.Date()`"
+title: "PCA and PCR proximate nutrient analysis and graphing"
+output: html_document
+params:
+  plot_dir:    "output_all/plots"
+  data_dir:    "output_all/export_data"
+  report_dir:  "output_all/reports"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+## Load script and directories
+```{r}
+library(dplyr)
+library(purrr)
+library(readxl)
+library(stringr)
+library(knitr)
+
+# --- 1. Load and prepare data
+data <- read_excel("full_merged_data_manual_fix.xlsx") %>%
+  mutate(
+    Lab_num = as.numeric(str_extract(join_id, "(?<=Lab_)\\d+"))
+  )
+data <- data %>%
+  mutate(across(all_of(numeric_vars), ~ as.numeric(gsub(",", ".", gsub("[^0-9.,-]", "", .)))))
+
+
+# Subset for variety tests
+data_variety <- data %>%
+  dplyr::filter(Location %in% c("Mendieta", "7H", "Caro Caido")) %>%
+  mutate(Location = ifelse(Location %in% c("7H", "Caro Caido"), "CC/7H", Location)) %>%
+  dplyr::filter(!is.na(variety))
+
+# --- 2. Define groups and numeric variables
+all_groups <- c("Life_S", "Location", "region", "variety")
+numeric_vars <- c(
+  "Protein_mg_per_g_mean",
+  "PE_mg_per_g_sample_mean",
+  "carb_mg_per_g_mean",
+  "ash_per_mean",
+  "car_per"
+)
+chem_vars <- c("carb_mg_per_g_mean", "ash_per_mean", "car_per")
+
+# --- 3. Kruskal-Wallis helper
+get_kw_table <- function(dat, group_var, num_var) {
+  res <- kruskal.test(as.formula(paste(num_var, "~", group_var)), data = dat)
+  
+  data.frame(
+    Variable = num_var,
+    Factor = dplyr::recode(group_var,
+                            "Life_S" = "Life Stage",
+                            "Location" = "Location",
+                            "region" = "Region",
+                            "variety" = "Variety"),
+    DF = res$parameter,
+    ChiSq = round(res$statistic, 2),
+    P = format.pval(res$p.value, digits = 3, eps = 0.001),
+    stringsAsFactors = FALSE
+  )
+}
+
+# --- 4. Generate combinations
+combos <- expand.grid(Group = all_groups,
+                      Variable = numeric_vars,
+                      stringsAsFactors = FALSE)
+
+# --- 5. Loop through and calculate Kruskal-Wallis for each
+table6_kw <- purrr::map_dfr(seq_len(nrow(combos)), function(i) {
+  grp <- combos$Group[i]
+  var <- combos$Variable[i]
+  
+  dat <- if (grp == "variety") data_variety else data
+  
+  # Apply Lab 1-22 filter for carrageenan, ash, carbohydrate
+  if (var %in% chem_vars) {
+    dat <- dat %>% dplyr::filter(Lab_num <= 22)
+  }
+  
+  get_kw_table(dat, grp, var)
+})
+
+# --- 6. Export and view
+if (!dir.exists("results")) dir.create("results")
+write.csv(table6_kw,
+          "results/table6_style_summary_kw.csv",
+          row.names = FALSE)
+
+#--------#
+#Make summary table too
+# --- 3. Generate summary table (mean ± SE, N)
+
+
+summary_table <- data %>%
+  dplyr::select(all_of(numeric_vars)) %>%
+  summarise(across(
+    everything(),
+    list(
+      mean = ~ mean(.x, na.rm = TRUE),
+      se = ~ sd(.x, na.rm = TRUE) / sqrt(sum(!is.na(.x))),
+      N = ~ sum(!is.na(.x))
+    ),
+    .names = "{.col}_{.fn}"
+  )) %>%
+  pivot_longer(
+    cols = everything(),
+    names_to = c("Variable", ".value"),
+    names_pattern = "^(.*)_(mean|se|N)$"
+  ) %>%
+  mutate(
+    Mean_SE = sprintf("%.2f ± %.2f", mean, se)
+  ) %>%
+dplyr::select(Variable, N, Mean_SE)
+
+# --- 4. Display the table cleanly
+kable(
+  summary_table,
+  caption = "General averages with standard error (mean ± SE) and sample size (N) for all numeric variables across the entire dataset."
+)
+
+```
+

@@ -1,6 +1,6 @@
 ---
 title: "Multivariate Analysis of Field Samples"
-author: "[Your Name]"
+author: "Trevor Eakes"
 date: "`r format(Sys.time(), '%B %d, %Y')`"
 output:
   html_document:
@@ -17,32 +17,25 @@ knitr::opts_chunk$set(
   fig.width = 6,
   fig.height = 4
 )
-library(readxl)
-library(dplyr)
-library(ggplot2)
-library(vegan)
-library(car)
 ```
 
 # Data Import and Preparation
 In this first step, I read in the merged field dataset and added a numeric Lab_Num identifier so I can focus on samples Lab_01 through Lab_22.
 ```{r load-data}
+source("process_plate_run.R")
 data <- read_excel("full_merged_data_manual_fix.xlsx")
-library("here")
-source(here("process_plate_run.R"))
+#
 data <- data %>%
   mutate(Lab_Num = as.numeric(sub("Lab_", "", join_id)))
 data$Protein_mg_per_g_mean <- data$Protein_mg_per_g_mean %>% as.numeric()
 data$PE_mg_per_g_sample_mean <- data$PE_mg_per_g_sample_mean %>% as.numeric()
 data$carb_mg_per_g_mean <- data$carb_mg_per_g_mean %>% as.numeric()
 data$ash_per_mean <- data$ash_per_mean %>% as.numeric()
-data$PE_pred_run2_mg_per_g_mean <- data$PE_pred_run2_mg_per_g_mean %>% as.numeric()
 data$Kappa_Index <- data$Kappa_Index %>% as.numeric()
 data$car_per <- data$car_per %>% as.numeric()
 data$Iota_Index <- data$Iota_Index %>% as.numeric()
 data$Lambda_Index <- data$Lambda_Index %>% as.numeric()
 class(data$Protein_mg_per_g_mean)
-summary(data)
 ```
 
 # Q1: Is PE higher in somewhere?
@@ -51,19 +44,16 @@ I wanted to see if the Ilo region or Locations or Life_S has/have more phycoeryt
 ```{r Q1-test}
 kw_result <- kruskal.test(PE_mg_per_g_sample_mean ~ Location, data = data)
 kw_result2 <- kruskal.test(PE_mg_per_g_sample_mean ~ region, data = data)
-kw_Life_S_pe <- kruskal.test(PE_mg_per_g_sample_mean ~ Life_S, data = data)
+kw_lifestage_pe <- kruskal.test(PE_mg_per_g_sample_mean ~ Life_S, data = data)
 
 # Print the result
 print(kw_result)
 print(kw_result2)
-print(kw_Life_S_pe)
-
-compare_groups(data, "PE_mg_per_g_sample_mean", "Location", subfolder_name = "PE_Location" )
-compare_groups(data, "PE_mg_per_g_sample_mean", "Life_S", subfolder_name = "PE_LifeS" )
+print(kw_lifestage_pe)
 
 pairwise_result1 <- pairwise.wilcox.test(
   data$PE_mg_per_g_sample_mean,
-  data$Life_S,
+  data$`Life_S`,
   p.adjust.method = "BH"
 )
 
@@ -107,8 +97,8 @@ kw_region_prot <- kruskal.test(Protein_mg_per_g_mean ~ region, data = data)
 kw_region_prot
 kw_location_prot <- kruskal.test(Protein_mg_per_g_mean ~ Location, data =data)
 kw_location_prot
-kw_Life_S_prot <- kruskal.test(Protein_mg_per_g_mean ~ Life_S, data = data)
-kw_Life_S_prot
+kw_lifestage_prot <- kruskal.test(Protein_mg_per_g_mean ~ `Life_S`, data = data)
+kw_lifestage_prot
 ```
 
 
@@ -116,7 +106,7 @@ kw_Life_S_prot
 I wanted to see if the two varieties differ in protein or PE in those regions, so I ran Wilcoxon tests and made boxplots.
 
 ```{r Q4-test-plots}
-vm_data <- data %>% filter(region %in% c("Paracas","Marcona"), !is.na(variety))
+vm_data <- data %>% dplyr::filter(region %in% c("Paracas","Marcona"), !is.na(variety))
 # Protein
 wil_var_p <- wilcox.test(
   as.numeric(Protein_mg_per_g_mean) ~ variety,
@@ -128,35 +118,30 @@ wil_var_pe <- wilcox.test(
   data = vm_data
 )
 wil_var_p; wil_var_pe
-
-
-
-compare_groups(vm_data, "Protein_mg_per_g_mean", "variety", subfolder_name = "PE_Location" )
-compare_groups(vm_data, "PE_mg_per_g_sample_mean", "variety", subfolder_name = "PE_Location" )
 ```
 
-# Q5: Protein by life stage in Paracas & Marcona
-Here, I tested protein differences between life stages and plotted results.
+# Q5: Protein by Life_S in Paracas & Marcona
+Here, I tested protein differences between Life_Ss and plotted results.
 
 ```{r Q5-test-plot}
-# Q5: Protein by Life Stage across Paracas & Marcona
-ls_data <- vm_data %>% filter(!is.na(Life_S), !is.na(Protein_mg_per_g_mean))
+# Q5: Protein by `Life_S` across Paracas & Marcona
+ls_data <- vm_data %>% dplyr::filter(!is.na(`Life_S`), !is.na(Protein_mg_per_g_mean))
 wil_ls <- wilcox.test(
-  as.numeric(Protein_mg_per_g_mean) ~ Life_S,
+  as.numeric(Protein_mg_per_g_mean) ~ `Life_S`,
   data = ls_data
 )
 wil_ls
-# Enhanced boxplot with jitter for protein by life stage
-p5 <- ggplot(ls_data, aes(x = Life_S, y = Protein_mg_per_g_mean, fill = Life_S)) +
+# Enhanced boxplot with jitter for protein by Life_S
+p5 <- ggplot(ls_data, aes(x = `Life_S`, y = Protein_mg_per_g_mean, fill = `Life_S`)) +
   geom_boxplot(outlier.shape = NA, alpha = 0.7) +
-  geom_jitter(aes(color = Life_S), width = 0.2, size = 2, alpha = 0.8) +
+  geom_jitter(aes(color = `Life_S`), width = 0.2, size = 2, alpha = 0.8) +
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1),
         legend.position = "none") +
   scale_fill_brewer(palette = "Pastel2") +
   scale_color_brewer(palette = "Dark2") +
-  labs(x = "Life Stage", y = "Protein (mg/g)",
-       title = "Q5: Protein by Life Stage (Box + Jitter)")
+  labs(x = "Life_S", y = "Protein (mg/g)",
+       title = "Q5: Protein by Life_S (Box + Jitter)")
 print(p5)
 ```
 
@@ -165,9 +150,9 @@ print(p5)
 To see if carrageenan content varies by group, I used Kruskal–Wallis tests and checked boxplots.
 
 ```{r Q6-tests}
-car_data <- data %>% filter(!is.na(car_per))
+car_data <- data %>% dplyr::filter(!is.na(car_per))
 kw_var_car <- kruskal.test(car_per ~ variety, data = car_data)
-kw_ls_car  <- kruskal.test(car_per ~ Life_S, data = car_data)
+kw_ls_car  <- kruskal.test(car_per ~ `Life_S`, data = car_data)
 kw_loc_car <- kruskal.test(car_per ~ Location, data = car_data)
 kw_var_car; kw_ls_car; kw_loc_car
 ```
@@ -175,7 +160,7 @@ kw_var_car; kw_ls_car; kw_loc_car
 # Q7: Kappa, Iota, Lambda by groups
 I looped through each viscosity index and tested for differences across my factors.
 ```{r Q7-loop}
-kin_data <- data %>% filter(!is.na(Kappa_Index) & !is.na(Iota_Index) & !is.na(Lambda_Index))
+kin_data <- data %>% dplyr::filter(!is.na(Kappa_Index) & !is.na(Iota_Index) & !is.na(Lambda_Index))
 kin_vars <- c("Kappa_Index","Iota_Index","Lambda_Index")
 results <- lapply(kin_vars, function(kin) {
   kruskal.test(as.formula(paste(kin, "~ Life_S")), data = kin_data)
@@ -190,7 +175,7 @@ results
 #################################
 
 filtered_data <- data %>%
-  filter(Life_S %in% c("Carp", "Gam/Tetra"),
+  dplyr::filter(`Life_S` %in% c("Carp", "Gam/Tetra"),
          !is.na(variety),
          !is.na(Location),
          !is.na(PE_mg_per_g_sample_mean),
@@ -198,18 +183,18 @@ filtered_data <- data %>%
 # PE tests
 # PE
 kw_pe <- filtered_data %>%
-  group_by(Life_S) %>%
+  group_by(`Life_S`) %>%
   group_map(~ {
     res <- kruskal.test(PE_mg_per_g_sample_mean ~ Location, data = .x)
-    tibble(Life_S = .y$Life_S, stat = res$statistic, p = res$p.value)
+    tibble(`Life_S` = .y$Life_S, stat = res$statistic, p = res$p.value)
   }) %>% bind_rows()
 
 # Protein
 kw_prot <- filtered_data %>%
-  group_by(Life_S) %>%
+  group_by(`Life_S`) %>%
   group_map(~ {
     res <- kruskal.test(Protein_mg_per_g_mean ~ Location, data = .x)
-    tibble(Life_S = .y$Life_S, stat = res$statistic, p = res$p.value)
+    tibble(`Life_S` = .y$`Life_S`, stat = res$statistic, p = res$p.value)
   }) %>% bind_rows()
 
 print(kw_pe)
@@ -224,7 +209,7 @@ write.csv(kw_prot, "output/Protein_KW_by_LifeS.csv", row.names = FALSE)
 # PE Plot
 p_pe <- ggplot(filtered_data, aes(x = Location, y = PE_mg_per_g_sample_mean)) +
   geom_boxplot() +
-  facet_wrap(~ Life_S, ncol = 1) +
+  facet_wrap(~ `Life_S`, ncol = 1) +
   labs(title = "PE (mg/g) by Location", y = "PE (mg/g)", x = "Location") +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
@@ -233,7 +218,7 @@ ggsave("output/figures/key/PE_by_Location_by_LifeS.png", p_pe)
 # Protein Plot
 p_prot <- ggplot(filtered_data, aes(x = Location, y = Protein_mg_per_g_mean)) +
   geom_boxplot() +
-  facet_wrap(~ Life_S, ncol = 1) +
+  facet_wrap(~ `Life_S`, ncol = 1) +
   labs(title = "Protein (mg/g) by Location", y = "Protein (mg/g)", x = "Location") +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
@@ -246,7 +231,7 @@ p_pe
 
 
 # Q9 Multivariate Analysis: PERMANOVA
-I ran PERMANOVA on all standardized numeric traits for Labs 01–22 to see how life stage and location structure the data. Variety excluded.
+I ran PERMANOVA on all standardized numeric traits for Labs 01–22 to see how `Life_S` and location structure the data. Variety excluded.
 ```{r}
 # Load packages 
 library(tidyverse)
@@ -268,23 +253,23 @@ data$Protein_mg_per_g_mean <- data$Protein_mg_per_g_mean %>% as.numeric()
 data$PE_mg_per_g_sample_mean <- data$PE_mg_per_g_sample_mean %>% as.numeric()
 data$carb_mg_per_g_mean <- data$carb_mg_per_g_mean %>% as.numeric()
 data$ash_per_mean <- data$ash_per_mean %>% as.numeric()
-data$PE_pred_run2_mg_per_g_mean <- data$PE_pred_run2_mg_per_g_mean %>% as.numeric()
 data$Kappa_Index <- data$Kappa_Index %>% as.numeric()
 data$car_per <- data$car_per %>% as.numeric()
 data$Iota_Index <- data$Iota_Index %>% as.numeric()
 data$Lambda_Index <- data$Lambda_Index %>% as.numeric()
 
+
 # Clean & filter to Lab_01–22
 data <- data %>%
-  filter(str_detect(join_id, "^Lab_")) %>%
+  dplyr::filter(str_detect(join_id, "^Lab_")) %>%
   mutate(Lab_Num = as.numeric(str_extract(join_id, "\\d+"))) %>%
-  filter(Lab_Num >= 1 & Lab_Num <= 22)
+  dplyr::filter(Lab_Num >= 1 & Lab_Num <= 22)
 
 # Select numeric traits and metadata
 numeric_cols <- names(data)[sapply(data, is.numeric) & !names(data) %in% c("Lab_Num", "t_rep_number")]
 meta_df <- data %>%
-  dplyr::select(join_id, Life_S, Location) %>%
-  mutate(across(c(Life_S, Location), as.factor))
+  dplyr::select(join_id, `Life_S`, Location) %>%
+  mutate(across(c(`Life_S`, Location), as.factor))
 
 # Prepare numeric data, scale, and handle NAs
 num_df <- data %>%
@@ -300,11 +285,24 @@ rownames(meta_df) <- data$join_id
 # --- Compute distance matrix ---
 dist_mat <- vegdist(num_df, method = "euclidean")
 
-# --- Dispersion plots ---
+# --- Dispersion plots and ANOVA test ---
 for (f in c("Life_S", "Location")) {
   disp <- betadisper(dist_mat, meta_df[[f]])
+  
+  # Run ANOVA to test homogeneity of multivariate dispersion
+  disp_anova <- anova(disp)
+  print(paste("Test for homogeneity of dispersion across", f))
+  print(disp_anova)
+  
+  # Optional: test pairwise differences if significant
+  # if (disp_anova$`Pr(>F)`[1] < 0.05) {
+  #   print(TukeyHSD(disp))
+  # }
+  
+  # Plot
   png(paste0("output/key_figures/dispersion_", f, ".png"), width = 800, height = 600)
   plot(disp, main = paste("Dispersion by", f))
+  dev.off()
 }
 #Outliers
 # Compute Mahalanobis distances from the center
@@ -321,20 +319,23 @@ cat("Potential outliers based on Mahalanobis distance:\n")
 print(rownames(num_df)[outliers])
 
 
-# --- PCoA plot with biplot ---
+# --- Compute distance matrix if not yet done ---
+# dist_mat <- dist(scale(num_df)) # or your specific distance metric
+
+# --- PCoA ---
 pcoa <- cmdscale(dist_mat, eig = TRUE, k = 2)
 site_scores <- as.data.frame(pcoa$points)
 colnames(site_scores) <- c("PC1", "PC2")
 site_scores$join_id <- rownames(site_scores)
 plot_df <- left_join(site_scores, meta_df, by = "join_id")
+variance_explained_percent <- round((pcoa$eig / sum(pcoa$eig)) * 100, 1)
 
-# Mark outliers in PCoA plotting data
+## Mark outliers for star overlay if using additional outlier detection
 plot_df$outlier <- rownames(plot_df) %in% rownames(num_df)[outliers]
-# Prepare outlier data for overlay (join with plot_df to get coordinates)
 outlier_df <- plot_df %>% 
-  filter(join_id %in% rownames(num_df)[outliers])
+  dplyr::filter(join_id %in% rownames(num_df)[outliers])
 
-# --- Fit environmental variables using envfit ---
+# --- Envfit ---
 fit <- envfit(pcoa, num_df, perm = 999)
 narrow_df <- as.data.frame(fit$vectors$arrows * sqrt(fit$vectors$r))
 colnames(narrow_df) <- c("PC1", "PC2")
@@ -344,52 +345,83 @@ narrow_df$r_squared <- fit$vectors$r[narrow_df$variable]
 
 # --- Abbreviate variable names ---
 var_labels <- tribble(
-  ~variable,                         ~label,
+  ~variable,                       ~label,
   "PE_mg_per_g_sample_mean",       "PE",
   "PE_pred_run2_mg_per_g_mean",    "PE_pred",
   "Protein_mg_per_g_mean",         "Prot",
   "ash_per_mean",                  "Ash",
   "carb_mg_per_g_mean",            "Carb",
-  "car_per",                        "Carr",
+  "car_per",                       "Carr",
   "Iota_Index",                    "Iota",
   "Kappa_Index",                   "Kappa",
   "Lambda_Index",                  "Lambda"
 )
+
 narrow_df <- left_join(narrow_df, var_labels, by = "variable") %>%
-  filter(!is.na(label)) %>%
-  mutate(label = factor(label, levels = label))
-#
-# Prepare outlier data for overlay (join with plot_df to get coordinates)
+  dplyr::filter(!is.na(label)) %>%
+  mutate(label = factor(label, levels = unique(label)))
 
-
-# --- Scale arrows ---
+# --- Scale arrows for clarity ---
 scale_factor <- 3.5
 narrow_df <- narrow_df %>%
   mutate(PC1 = PC1 * scale_factor,
          PC2 = PC2 * scale_factor)
 
+# --- EXCLUDE "Lab_02" and "Lab_13" FROM THE GRAPH ONLY ---
+#plot_df <- plot_df %>% dplyr::filter(!join_id %in% c("Lab_02", "Lab_13"))
+#outlier_df <- outlier_df %>% dplyr::filter(!join_id %in% c("Lab_02", "Lab_13"))
+
+# --- PCoA Biplot ---
 biplot <- ggplot(plot_df, aes(x = PC1, y = PC2)) +
-  geom_point(aes(color = Location, shape = Life_S), size = 3) +
-  # Overlay outlier stars
-  geom_point(data = outlier_df, aes(x = PC1, y = PC2), 
-             shape = 1, size = 1, stroke = 1, color = "red") +
+  geom_point(aes(color = Location, shape = `Life_S`), size = 6, alpha = 0.9) +
+  
+  geom_point(data = outlier_df,
+             aes(x = PC1, y = PC2),
+             shape = 8, size = 4, color = "red") +
+  
   geom_segment(data = narrow_df,
                aes(x = 0, y = 0, xend = PC1, yend = PC2),
-               arrow = arrow(length = unit(0.2, "cm")), color = "black") +
+               arrow = arrow(length = unit(0.2, "cm")),
+               color = "black", linewidth = 0.7) +
+  
   geom_text_repel(data = narrow_df,
                   aes(x = PC1, y = PC2, label = label),
-                  size = 3, max.overlaps = Inf) +
-  labs(x = paste0("PC1 (", explained_variance[1], "%)"),
-       y = paste0("PC2 (", explained_variance[2], "%)"),
-       title = "PCoA with Nutrient Biplot and Outliers Highlighted") +
+                  size = 6, fontface = "bold", max.overlaps = Inf) +
+  
+  labs(
+    x = paste0("PC1 (", variance_explained_percent[1], "%)"),
+    y = paste0("PC2 (", variance_explained_percent[2], "%)"),
+    title = "PCoA with Nutrient Biplot",
+    color = "Location",
+    shape = "Life Stage"
+  ) +
+  
   coord_fixed() +
-  theme_minimal()
+  
+  theme_minimal(base_size = 20) +
+  theme(
+    plot.title = element_text(face = "bold", size = 28, hjust = 0.5),
+    axis.title = element_text(size = 24),
+    axis.text = element_text(size = 22),
+    legend.title = element_text(size = 24),
+    legend.text = element_text(size = 22)
+  )
 
-# Save to file
-ggsave("output/key_figures/pcoa_biplot_with_outliers.png", plot = biplot, width = 8, height = 6, dpi = 300)
-
+# --- Save plot ---
+ggsave(
+  "output/key_figures/pcoa_biplot_with_outliers.png",
+  plot = biplot,
+  width = 10, height = 8, dpi = 600
+)
+#
+#
+#
+#
+#
+#
+#
 # --- Marginal and Conditional PERMANOVA (with by = "terms") ---
-perm_terms <- adonis2(dist_mat ~ Life_S + Location, data = meta_df, permutations = 999, by = "terms")
+perm_terms <- adonis2(dist_mat ~ `Life_S` + Location, data = meta_df, permutations = 999, by = "terms")
 
 # --- Table of explained variation per term ---
 permanova_table <- perm_terms %>%
@@ -415,10 +447,10 @@ pie_plot
 ggsave("output/key_figures/variance_pie.png", plot = pie_plot, width = 8, height = 6, dpi = 300)
 #
 # PERMANOVA with marginal terms
-perm_terms <- adonis2(dist_mat ~ Life_S + Location, data = meta_df, permutations = 999, by = "terms")
+perm_terms_marg<- adonis2(dist_mat ~ Location + Life_S, data = meta_df, permutations = 999, by="terms")
 
 # Full model for total explained variance
-perm_full <- adonis2(dist_mat ~ Life_S + Location, data = meta_df, permutations = 999)
+perm_full <- adonis2(dist_mat ~ `Life_S` + Location, data = meta_df, permutations = 999)
 
 # Extract R² values
 r2_life     <- perm_terms["Life_S", "R2"]
@@ -428,12 +460,12 @@ r2_residual <- 1 - r2_total
 
 # Prepare a table
 venn_table <- tibble::tibble(
-  Component = c("Life Stage", "Location", "Residual", "Total"),
+  Component = c("Life_S (type III)", "Location (Type III)", "Residual", "Total variation (type I)"),
   R2 = c(r2_life, r2_location, r2_residual, r2_total)
 )
 print(venn_table)
 #
-varpart_model <- varpart(num_df, ~ Life_S, ~ Location, data = meta_df)
+varpart_model <- varpart(num_df, ~ `Life_S`, ~ Location, data = meta_df)
 #variation partititioning model results
 print(varpart_model)
 
@@ -441,18 +473,18 @@ print(varpart_model)
 png("output/key_figures/variation_partitioning.png", width = 800, height = 600)
 plot(varpart_model, 
      bg = c("lightblue", "lightgreen"), 
-     Xnames = c("Life Stage", "Location"),
+     Xnames = c("Life_S", "Location"),
      id.size = 1.2, cex = 1.4, 
      main = "Variation Partitioning of Nutrient Traits")
 
-# --- Dendrogram colored by Location, labeled by Life Stage ---
+# --- Dendrogram colored by Location, labeled by Life_S ---
 hc <- hclust(dist_mat, method = "average")
 dend <- as.dendrogram(hc)
 label_order <- labels(dend)
 meta_ordered <- meta_df[label_order, ]
 
-# Replace labels with Life Stage
-dend <- dend %>% set("labels", as.character(meta_ordered$Life_S))
+# Replace labels with Life_S
+dend <- dend %>% set("labels", as.character(meta_ordered$`Life_S`))
 
 # Color labels by Location
 location_labels <- as.character(meta_ordered$Location)
@@ -466,7 +498,7 @@ dend <- dend %>%
   set("labels_cex", 1.4)
 
 png("output/key_figures/dendrogram_lifestage_colored_by_location.png", width = 1000, height = 600)
-plot(dend, main = "Dendrogram Labeled by Life Stage, Colored by Location", font.main = 2)
+plot(dend, main = "Dendrogram Labeled by Life_S, Colored by Location", font.main = 2)
 legend("topright", legend = location_levels, fill = palette, title = "Location", cex = 0.9)
 ##
 
@@ -475,7 +507,7 @@ legend("topright", legend = location_levels, fill = palette, title = "Location",
 
 
 # Study Design Summary
-Below is a table summarizing the study design by location: number of replicates, life stage counts, presence and counts of F. Glom, constant depth, and number of observations for each measured variable.
+Below is a table summarizing the study design by location: number of replicates, Life_S counts, presence and counts of F. Glom, constant depth, and number of observations for each measured variable.
 
 ```{r study-design-summary, echo=FALSE}
 
@@ -488,12 +520,12 @@ vars_to_count <- c("Protein_mg_per_g_mean", "PE_mg_per_g_sample_mean",
 
 # Perform the data aggregation
 study_design <- data1 %>%
-  filter(!is.na(Location)) %>% # Ensure we only consider rows with a specified Location
+  dplyr::filter(!is.na(Location)) %>% # Ensure we only consider rows with a specified Location
   group_by(Location)  %>%
   summarise(
-    replicates = n(), # Total number of observations (rows) for this location
+    replicates = Life_S, # Total number of observations (rows) for this location
     n_Carp = sum(Life_S == "Carp", na.rm = TRUE), # Count of "Carp" in Life_S
-    n_GamTet = sum(Life_S == "Gam/Tetra", na.rm = TRUE), # Count of "Gam/Tetra" in Life_S
+    n_GamTet = sum(Life_S == "Gam/Tetra", na.rm = TRUE), # Count of "Gam/Tetra" in `Life_S`
     # Count how many rows have "F. Glom" variety
     F_Glom = sum(variety == "F. Glom", na.rm = TRUE),
     Depth = "0–2 m", # Depth is a fixed value as per your original code
@@ -513,7 +545,7 @@ study_design %>%
   gt(rowname_col = "Location") %>%
   tab_header(
     title = md("**Study Design Summary by Location**"),
-    subtitle = md("Replicates, Life Stages, F. Glom presence, Depth, and Obs counts")
+    subtitle = md("Replicates, `Life_S`s, F. Glom presence, Depth, and Obs counts")
   ) %>%
   cols_label(
     replicates = "Total Obs", # Renamed for clarity, reflecting total observations
@@ -559,11 +591,11 @@ numeric_cols <- data %>% dplyr::select(where(is.numeric)) %>% colnames()
 
 # Step 2: Filter rows where all numeric columns are > 0 (and not NA)
 data_clean <- data %>%
-  filter(if_all(all_of(numeric_cols), ~ !is.na(.) & . > 0))
+  dplyr::filter(if_all(all_of(numeric_cols), ~ !is.na(.) & . > 0))
 
 # Step 3: Summarize number of replicates per Location
 location_summary <- data_clean %>%
-  filter(!is.na(Location)) %>%
+  dplyr::filter(!is.na(Location)) %>%
   group_by(Location) %>%
   summarise(replicates = n(), .groups = "drop")
             
@@ -605,62 +637,3 @@ ggsave("output/figures/key/Q10_carrageenan_vs_ash.png",  p10_ash)
 ```
 Carb and ash correlate
 That's the analysis I carried out on the field data.
-
-#Q11: Does carrageenan corellate with ash or carbohydrate content
-```{r}
-# Filter to rows with all three variables present
-q11_data <- data %>%
-  dplyr::select(Location, PE_mg_per_g_sample_mean, Protein_mg_per_g_mean) %>%
-  drop_na()
-
-q11_data <- numeric(q11_data$PE_mg_per_g_sample_mean)
-q11_data <- numeric(q11_data$Protein_mg_per_g_mean)
-
-
-
-# Step 2: Filter rows where all numeric columns are > 0 (and not NA)
-data_clean <- q11_data %>%
-  filter(if_all(all_of(numeric_cols), ~ !is.na(.) & . > 0))
-
-# Step 3: Summarize number of replicates per Location
-location_summary <- data_clean %>%
-  filter(!is.na(Location)) %>%
-  group_by(Location) %>%
-  summarise(replicates = n(), .groups = "drop")
-            
-print(location_summary)
-
-# Run linear regressions
-lm_prot_pe <- lm(PE_mg_per_g_sample_mean ~ Protein_mg_per_g_mean, data = data_clean)
-
-
-# Save model summaries
-summary_peprot <- summary(lm_prot_pe)
-
-
-print(summary_peprot)
-print(summary_ash)
-
-# Export summary results
-write.csv(broom::tidy(summary_carb), "output/Q10_lm_carrageenan_vs_carb.csv", row.names = FALSE)
-write.csv(broom::tidy(summary_ash),  "output/Q10_lm_carrageenan_vs_ash.csv",  row.names = FALSE)
-
-# Make plots
-p10_carb <- ggplot(q10_data, aes(x = carb_mg_per_g_mean, y = car_per)) +
-  geom_point() +
-  geom_smooth(method = "lm", se = TRUE, color = "steelblue") +
-  labs(title = "Q10: Carrageenan vs Carbohydrates",
-       x = "Carbohydrates (mg/g)", y = "Carrageenan (%)")
-
-p10_ash <- ggplot(q10_data, aes(x = ash_per_mean, y = car_per)) +
-  geom_point() +
-  geom_smooth(method = "lm", se = TRUE, color = "firebrick") +
-  labs(title = "Q10: Carrageenan vs Ash",
-       x = "Ash (%)", y = "Carrageenan (%)")
-
-p10_ash
-p10_carb
-# Save plots
-ggsave("output/figures/key/Q10_carrageenan_vs_carb.png", p10_carb)
-ggsave("output/figures/key/Q10_carrageenan_vs_ash.png",  p10_ash)
-```

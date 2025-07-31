@@ -117,9 +117,19 @@ dir.create(plot_dir, recursive = TRUE, showWarnings = FALSE)
 intercept <- coef(model)[1]
 slope     <- coef(model)[2]
 
+# Step 1: mg/mL glucose equivalent
 carb_weights$con_mg_per_ml <- (carb_weights$absorbance - intercept) / slope
-carb_weights$carb_mg_total <- carb_weights$con_mg_per_ml * 0.5
-carb_weights$carb_mg_per_g <- (carb_weights$carb_mg_total / carb_weights$weights) * 1000
+
+# Step 2: Calculate mg glucose eq. in 30 µL aliquot
+carb_weights$mg_in_aliquot <- carb_weights$con_mg_per_ml * 0.030
+
+# Step 3: Scale to total extract volume (3.03 mL extract / 30 µL used = 33.33)
+scaling_factor <- 3030 / 30  # 33.33
+carb_weights$mg_in_extract <- carb_weights$mg_in_aliquot * scaling_factor
+
+# Step 4: Calculate percent carbohydrate
+carb_weights$percent_carb <- (carb_weights$mg_in_extract / carb_weights$weights) * 100
+
 
 # Save calc data
 write_csv(carb_weights, file.path(export_dir, "carb_weights.csv"))
@@ -141,15 +151,16 @@ carb_weights <- carb_weights %>%
 # Save outlier-flagged data
 write_csv(carb_weights, file.path(export_dir, "carb_weights_with_outliers.csv"))
 
-carb_weights_clean <- carb_weights %>% filter(outlier_flag == "normal")
+carb_weights_clean <- carb_weights %>% dplyr::filter(outlier_flag == "normal")
 write_csv(carb_weights_clean, file.path(export_dir, "carb_weights_clean.csv"))
+
+
 
 # ---- Step 8: Replicate analysis
 carb_rep_analy <- analyze_replicates(
   data          = carb_weights_clean,
   id_col        = "ID",
   weight_col    = "weights",
-  date_col      = "date",
   output_prefix = "carb_rep",
   choose_best_3 = TRUE,
   dir           = export_dir
@@ -211,18 +222,18 @@ joindf_by_id(
 )
 
 carb_rep_final <- carb_rep_final %>%
-  filter(!is.na(carb_mg_per_g_mean))
+  dplyr::filter(!is.na(carb_mg_per_g_mean))
 
 # Output directory for replicate analysis plots
 rep_plot_dir <- file.path("output_carb", "plots", "replicate_analysis")
 dir.create(rep_plot_dir, recursive = TRUE, showWarnings = FALSE)
 
 carb_location <- carb_rep_final %>%
-  filter(!Location %in% c("Lima Market Freeze Dry", "Ilo Freeze Dry", "Ilo oven dry", "Ilo Fresh", "Lima Market Fresh"))
+  dplyr::filter(!Location %in% c("Lima Market Freeze Dry", "Ilo Freeze Dry", "Ilo oven dry", "Ilo Fresh", "Lima Market Fresh"))
 
 # Remove F.Glom for Chamissoi analysis
 carb_location_cham <- carb_rep_final %>%
-  filter(!variety %in% c("F.Glom"))
+  dplyr::filter(!variety %in% c("F.Glom"))
 
 # Group comparison: Location
 compare_groups(

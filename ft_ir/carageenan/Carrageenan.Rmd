@@ -26,8 +26,8 @@ Table3_Intensities: one row per band, showing relative intensities for each samp
 Carrageenan_Scores: per‐sample continuous Kappa, Iota, and Lambda indices.
 ```{r}
 # Required packages
-
-
+library(here)
+source(here("process_plate_run.R"))
 # 1) Read your updated data
 df_raw <- read_csv("metaboanalyst_main_input_data.csv")
 

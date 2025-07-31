@@ -49,7 +49,7 @@ getwd()
 
 ```{r load-excel-files, warning=FALSE}
 # 1. Define the folder containing all Excel inputs
-input_folder <- "car_ftir_input"
+input_folder <- "Input PE"
 
 # 2. Find all .xlsx files (full paths), excluding temp files that start with "~$"
 excel_files <- list.files(
@@ -1241,16 +1241,45 @@ compare_groups(
 )
 
 #################################Preperation method
+pe_rep_final <- read.csv("~/GitHub/TEdissy_analysis/PE/output PE/export data/Samples Analysis Final/PErep_final.csv")
+PE_methods <- pe_rep_final %>%
+  dplyr::filter(Location %in% c(
+    "Lima Market Freeze Dry", 
+    "Ilo Freeze Dry", 
+    "Ilo oven dry", 
+    "Ilo mariculture", 
+    "Ilo Fresh", 
+    "Lima Market Fresh", 
+    "Lima Market Oven Dry"
+  )) %>%
+  dplyr::mutate(
+    Location = dplyr::recode(Location,
+      "Ilo mariculture" = "Ilo oven dry"
+    )
+  )
+#
+# Perform Kruskal-Wallis test
+kw_result <- kruskal.test(
+  formula = PE_mg_per_g_sample_mean ~ Location,
+  data = PE_methods
+)
 
-PE_methods <- PErep_final %>%
-  filter(Location %in% c("Lima Market Freeze Dry", "Ilo Freeze Dry", "Ilo oven dry", "Ilo Fresh", "Lima Market Fresh", "Lima Market Oven Dry"))
+# Print the test results
+print(kw_result)
+
+# Optionally, extract elements for reporting:
+kw_summary <- tibble::tibble(
+  Statistic = kw_result$statistic,
+  Df = kw_result$parameter,
+  p_value = kw_result$p.value
+)
+
+print(kw_summary)
 
 compare_groups(
   data         = PE_methods,
   response_var = "PE_mg_per_g_sample_mean",
-  group_var    = "Location",
-  report_dir = "output PE/reports",
-  plot_dir   = "output PE/plots"
+  group_var    = "Location"
 )
 
 compare_groups(

@@ -24,18 +24,12 @@ opts_chunk$set(
 ## Load script and directories
 ```{r}
 
-# --- 1. Set Up Directories ---
-params <- list(
-  plot_dir   = "output_ftir/plots",
-  data_dir   = "output_ftir/export_data",
-  report_dir = "output_ftir/reports"
-)
 dirs <- map(params, here)
 walk(dirs, dir_create, recurse = TRUE)
 
 # --- 2. Locate Input Files ---
-input_dir <- here("ft_ir/carageenan/car_ftir_input")
-all_files <- dir_ls(input_dir, regexp = "\\.csv$")
+#input_dir <- "C:/Users/trevo/OneDrive/Documents/GitHub/ft_ir/carageenan/car_ftir_input"
+all_files <- dir_ls("C:/Users/trevo/OneDrive/Documents/GitHub/TEdissy_analysis/ft_ir/carageenan/car_ftir_input", regexp = "\\.csv$")
 metadata_file <- all_files[str_detect(all_files, "sample_data_limited")]
 standard_file <- all_files[str_detect(all_files, "standard_kappa")]
 sample_files  <- setdiff(all_files, c(metadata_file, standard_file))
@@ -70,7 +64,7 @@ metadata_long <- metadata %>%
   pivot_longer(-Sample, names_to = "Variable", values_to = "Value") %>%
   slice(-n()) %>%  # remove last row if needed
   pivot_wider(names_from = Sample, values_from = Value) %>%
-  select(Variable, everything())
+  dplyr::select(Variable, everything())
 
 # --- 8. Convert Spectra to Matrix Format (Samples as Rows) ---
 spectral_matrix <- spectra_wide %>%
@@ -105,8 +99,8 @@ main_input <- metadata_matrix %>%
   left_join(spectral_matrix, by = "Sample")
 
 # --- 12. Export Output Files ---
-write_csv(main_input, file.path(dirs$data_dir, "metaboanalyst_main_input_data.csv"))
-write_csv(metadata_matrix, file.path(dirs$data_dir, "metaboanalyst_secondary_metadata.csv"))
+write_csv(main_input, file.path(params$data_dir, "metaboanalyst_main_input_data.csv"))
+write_csv(metadata_matrix, file.path(params$data_dir, "metaboanalyst_secondary_metadata.csv"))
 
 message("✅ MetaboAnalyst input and metadata files saved.")
 ```

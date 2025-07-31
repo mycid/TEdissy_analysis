@@ -397,8 +397,8 @@ joindf_by_id <- function(df1,
                          save_csv_path   = NULL,
                          unmatched_out   = NULL) {
   # ---- Step 1: Rename keys for joining
-  df1 <- df1 %>% select(-any_of("join_id")) %>% rename(join_id = all_of(key_df1))
-  df2 <- df2 %>% select(-any_of("join_id")) %>% rename(join_id = all_of(key_df2))
+  df1 <- df1 %>% dplyr::select(-any_of("join_id")) %>% rename(join_id = all_of(key_df1))
+  df2 <- df2 %>% dplyr::select(-any_of("join_id")) %>% rename(join_id = all_of(key_df2))
   
   # ---- Step 2: Join
   joined <- full_join(df1, df2, by = "join_id")
@@ -412,7 +412,7 @@ joindf_by_id <- function(df1,
   n_unmatched <- 0
   if (!is.null(unmatched_out)) {
     df2_cols <- setdiff(names(df2), "join_id")
-    unmatched <- joined %>% filter(if_any(all_of(df2_cols), is.na))
+    unmatched <- joined %>% dplyr::filter(if_any(all_of(df2_cols), is.na))
     n_unmatched <- nrow(unmatched)
     write.csv(unmatched, unmatched_out, row.names = FALSE)
   }
@@ -714,8 +714,8 @@ analyze_replicates <- function(data,
     
     # Select numeric columns that are not in the exclude_cols list
     numeric_cols <- data %>%
-      select(where(is.numeric)) %>%
-      select(-any_of(exclude_cols)) %>%
+      dplyr::select(where(is.numeric)) %>%
+      dplyr::select(-any_of(exclude_cols)) %>%
       colnames()
     
     if (length(numeric_cols) == 0) {
@@ -855,6 +855,7 @@ compare_groups <- function(data,
                            group_var,
                            facet_var = NULL,
                            subfolder_name = NULL) {
+  library(dplyr)
   
   # Use global params for base dirs (assuming they are defined in the Rmd environment)
   base_plot_dir <- if (exists("plot_dir")) plot_dir else "output/plots"
@@ -896,7 +897,7 @@ compare_groups <- function(data,
       !!group_sym := factor(!!group_sym, levels = unique(data[[group_var]])),
       !!response_sym := as.numeric(!!response_sym)
     ) %>%
-    filter(!is.na(!!response_sym), !is.na(!!group_sym))
+    dplyr::filter(!is.na(!!response_sym), !is.na(!!group_sym))
   
   if (nrow(df) == 0) {
     message("No valid data points after filtering for response and group variables. Returning NULL plot.")
@@ -998,7 +999,7 @@ compare_groups <- function(data,
       } else if (kw_res$p.value < 0.05) {
         ph <- pairwise.wilcox.test(sub_df[[response_var]], sub_df[[group_var]], p.adjust.method = "BH")
         posthoc_results <- as.data.frame(as.table(ph$p.value)) %>%
-          filter(!is.na(Freq)) %>%
+          dplyr::filter(!is.na(Freq)) %>%
           rename(comparison_1 = Var1, comparison_2 = Var2, `p adj` = Freq) %>%
           unite(col = "comparison", comparison_1, comparison_2, sep = "-")
         group_letters <- generate_group_letters(posthoc_results, p_adj_col = "p adj", comparison_col = "comparison")
@@ -1024,7 +1025,7 @@ compare_groups <- function(data,
         summarise(y_pos = max(!!response_sym, na.rm = TRUE) * 1.05, .groups = "drop")
       
       label_df_facet <- left_join(group_letters, label_positions, by = c("group" = group_var)) %>%
-        filter(!is.na(y_pos))
+        dplyr::filter(!is.na(y_pos))
       
       if (nrow(label_df_facet) > 0) {
         if (!is.null(facet_var)) {
@@ -1094,7 +1095,7 @@ compare_groups <- function(data,
       aes(x = .data$group, y = .data$y_pos, label = .data$letter),
       vjust = -0.5,
       fontface = "bold",
-      size = 3,
+      size = 6,
       inherit.aes = FALSE
     )
   }
@@ -1170,7 +1171,7 @@ compare_groups_bootstrap <- function(data,
     mutate(
       !!group_sym    := factor(!!group_sym, levels = unique(data[[group_var]])),!!response_sym := as.numeric(!!response_sym)
     ) %>%
-    filter(!is.na(!!response_sym), !is.na(!!group_sym))
+    dplyr::filter(!is.na(!!response_sym), !is.na(!!group_sym))
   
   if (!is.null(facet_var)) {
     df_split     <- df %>% group_split(!!facet_sym)
@@ -1320,7 +1321,7 @@ compare_groups_bootstrap <- function(data,
               file = file.path(sub_report_dir, paste0("effects_", facet_name, ".csv")),
               row.names = FALSE)
     write.csv(
-      group_boot_list %>% select(group, letter),
+      group_boot_list %>% dplyr::select(group, letter),
       file = file.path(
         sub_report_dir,
         paste0("group_letters_", facet_name, ".csv")
@@ -1332,7 +1333,7 @@ compare_groups_bootstrap <- function(data,
       group_bootstrap_means = group_boot_list,
       pairwise_effectsizes  = pairwise,
       bartlett_test         = bartlett_test,
-      group_letters         = group_boot_list %>% select(group, letter)
+      group_letters         = group_boot_list %>% dplyr::select(group, letter)
     )
     
     p1 <- ggplot(group_boot_list, aes(x = group, y = mean_est)) +
